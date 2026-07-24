@@ -4,6 +4,12 @@ All notable changes to Loomark are documented in this file.
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-07-24
+
+### Fixed
+
+- Added the license and author package metadata required by the Linux RPM and Windows Squirrel release makers.
+
 ## [0.0.3] - 2026-07-24
 
 ### Fixed
