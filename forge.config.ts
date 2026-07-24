@@ -12,6 +12,7 @@ const config: ForgeConfig = {
     download: {
       checksums: electronChecksums,
     },
+    executableName: 'loomark',
     icon: 'resources/icons/icon',
     name: 'Loomark',
   },

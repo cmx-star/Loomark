@@ -4,6 +4,13 @@ All notable changes to Loomark are documented in this file.
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-07-24
+
+### Fixed
+
+- Fixed the Linux package executable name so Debian and RPM makers use the packaged binary.
+- Declared the Windows Squirrel packager dependency directly so pnpm installs its runtime dependency tree consistently in GitHub Actions.
+
 ## [0.0.2] - 2026-07-24
 
 ### Fixed
