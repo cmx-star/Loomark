@@ -4,6 +4,12 @@ All notable changes to Loomark are documented in this file.
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-07-24
+
+### Fixed
+
+- Patched the DMG maker cleanup path so GitHub macOS runners accept a temporary disk image that was already unmounted before `hdiutil detach` runs.
+
 ## [0.0.4] - 2026-07-24
 
 ### Fixed

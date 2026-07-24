@@ -1,7 +1,7 @@
 {
   "name": "loomark",
   "description": "A fast, local-first Markdown desktop editor.",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "author": "cmx",
   "license": "Apache-2.0",
   "private": true,
@@ -58,6 +58,9 @@
       "esbuild",
       "fs-xattr",
       "macos-alias"
-    ]
+    ],
+    "patchedDependencies": {
+      "appdmg@0.6.6": "patches/appdmg@0.6.6.patch"
+    }
   }
 }

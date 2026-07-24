@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  appdmg@0.6.6:
+    hash: a1e30e78a2003093d81520a024107c98dea898833743aaaba2da9139a2d59f5b
+    path: patches/appdmg@0.6.6.patch
+
 importers:
 
   .:
@@ -4680,7 +4685,7 @@ snapshots:
 
   ansi-styles@6.2.3: {}
 
-  appdmg@0.6.6:
+  appdmg@0.6.6(patch_hash=a1e30e78a2003093d81520a024107c98dea898833743aaaba2da9139a2d59f5b):
     dependencies:
       async: 1.5.2
       ds-store: 0.1.6
@@ -5030,7 +5035,7 @@ snapshots:
       debug: 4.4.3
       minimist: 1.2.8
     optionalDependencies:
-      appdmg: 0.6.6
+      appdmg: 0.6.6(patch_hash=a1e30e78a2003093d81520a024107c98dea898833743aaaba2da9139a2d59f5b)
     transitivePeerDependencies:
       - supports-color
     optional: true
