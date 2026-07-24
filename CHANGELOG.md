@@ -4,6 +4,12 @@ All notable changes to Loomark are documented in this file.
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-07-24
+
+### Fixed
+
+- Fixed cross-platform Electron Forge maker loading under pnpm and added the package metadata required for Debian bundles.
+
 ### Added
 
 - Open-source repository documentation, security policy, contribution guidance, and GitHub automation.

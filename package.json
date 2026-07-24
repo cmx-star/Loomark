@@ -1,6 +1,7 @@
 {
   "name": "loomark",
-  "version": "0.0.1",
+  "description": "A fast, local-first Markdown desktop editor.",
+  "version": "0.0.2",
   "private": true,
   "type": "module",
   "main": ".vite/build/main.cjs",

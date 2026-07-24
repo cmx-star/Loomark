@@ -1,3 +1,8 @@
+import { MakerDeb } from '@electron-forge/maker-deb'
+import { MakerDMG } from '@electron-forge/maker-dmg'
+import { MakerRpm } from '@electron-forge/maker-rpm'
+import { MakerSquirrel } from '@electron-forge/maker-squirrel'
+import { MakerZIP } from '@electron-forge/maker-zip'
 import type { ForgeConfig } from '@electron-forge/shared-types'
 import electronChecksums from 'electron/checksums.json'
 
@@ -11,11 +16,11 @@ const config: ForgeConfig = {
     name: 'Loomark',
   },
   makers: [
-    { name: '@electron-forge/maker-squirrel' },
-    { name: '@electron-forge/maker-zip', platforms: ['darwin', 'linux', 'win32'] },
-    { name: '@electron-forge/maker-dmg' },
-    { name: '@electron-forge/maker-deb' },
-    { name: '@electron-forge/maker-rpm' },
+    new MakerSquirrel(),
+    new MakerZIP({}, ['darwin', 'linux', 'win32']),
+    new MakerDMG(),
+    new MakerDeb(),
+    new MakerRpm(),
   ],
   plugins: [
     {
