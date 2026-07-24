@@ -1,0 +1,43 @@
+{
+  "name": "loomark",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:build:debug": "tauri build --debug",
+    "typecheck": "vue-tsc --noEmit",
+    "test:run": "vitest run",
+    "test": "vitest",
+    "benchmark:fixtures": "node scripts/generate-benchmark-file.mjs"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.8.1",
+    "@codemirror/lang-markdown": "^6.3.2",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/view": "^6.36.5",
+    "@lucide/vue": "1.26.0",
+    "@tailwindcss/vite": "4.3.3",
+    "@tauri-apps/api": "^2.3.0",
+    "@tauri-apps/plugin-dialog": "^2.2.0",
+    "markdown-it": "14.3.0",
+    "reka-ui": "2.10.1",
+    "tailwindcss": "4.3.3",
+    "vue": "^3.5.13",
+    "vue-i18n": "11.4.7"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.3.1",
+    "@types/markdown-it": "14.1.2",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^26.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^3.0.5",
+    "vue-tsc": "^2.2.0"
+  }
+}

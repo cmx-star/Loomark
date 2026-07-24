@@ -1,0 +1,10 @@
+node_modules/
+.node_modules-before-local-store/
+.node_modules-incomplete-local-store/
+.pnpm-store/
+dist/
+.vite/
+.benchmark-fixtures/
+src-tauri/target/
+src-tauri/gen/
+.DS_Store

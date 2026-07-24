@@ -1,0 +1,11 @@
+Loomark
+Copyright 2026 Loomark contributors
+
+This product is licensed under the Apache License, Version 2.0.
+
+Loomark includes third-party dependencies distributed under their respective
+licenses. Dependency license information is available from the package and
+Cargo manifests and must be retained when redistributing bundled artifacts.
+
+External repositories named in project documentation are design references.
+Their code, trademarks, assets, and licenses are not covered by this NOTICE.
