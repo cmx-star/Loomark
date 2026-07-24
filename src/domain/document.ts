@@ -6,8 +6,8 @@ export type LoadStrategy = 'full' | 'progressive' | 'unsupported'
 
 export interface DocumentMetrics {
   byteSize: number
-  lineCount: number
-  longestLineBytes: number
+  lineCount?: number
+  longestLineBytes?: number
   preflightMilliseconds: number
   readMilliseconds?: number
   editorMilliseconds?: number

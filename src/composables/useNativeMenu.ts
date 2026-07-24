@@ -1,8 +1,6 @@
-import { isTauri } from '@tauri-apps/api/core'
-import { getName } from '@tauri-apps/api/app'
-import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from '@tauri-apps/api/menu'
 import { onBeforeUnmount, onMounted, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import type { NativeMenuAction, NativeMenuLabels } from '@/desktop-contract'
 import type { AppLocale } from '@/i18n'
 import type { EditorMode, ThemeName } from '@/domain/workspace'
 
@@ -12,9 +10,11 @@ interface NativeMenuOptions {
   locale: Ref<AppLocale>
   mode: Ref<EditorMode>
   navigatorCollapsed: Ref<boolean>
+  richViewsAvailable: Ref<boolean>
   theme: Ref<ThemeName>
   closeActiveDocument: () => void
   openDocument: () => Promise<void>
+  openLogDirectory: () => Promise<void>
   printDocument: () => void
   saveActiveDocument: () => Promise<void>
   setLocale: (locale: AppLocale) => void
@@ -23,88 +23,58 @@ interface NativeMenuOptions {
   setTheme: (theme: ThemeName) => void
 }
 
-function run(action: () => void | Promise<void>) {
-  return () => void action()
-}
-
 export function useNativeMenu(options: NativeMenuOptions) {
   const { t } = useI18n({ useScope: 'global' })
-  let activeMenu: Menu | null = null
-  let generation = 0
+  let removeMenuActionListener: (() => void) | null = null
 
-  async function separator() {
-    return PredefinedMenuItem.new({ item: 'Separator' })
+  function labels(): NativeMenuLabels {
+    return {
+      appearance: t('menu.appearance'), closeTab: t('menu.closeTab'), copy: t('menu.copy'), cut: t('menu.cut'),
+      edit: t('menu.edit'), enUS: t('language.en-US'), file: t('menu.file'), fullscreen: t('menu.fullscreen'),
+      language: t('menu.language'), night: t('theme.night'), open: t('menu.open'), openLogDirectory: t('menu.openLogDirectory'),
+      paper: t('theme.paper'), paste: t('menu.paste'), print: t('menu.print'), reading: t('editor.reading'), redo: t('menu.redo'),
+      save: t('menu.save'), selectAll: t('menu.selectAll'), source: t('editor.source'), split: t('editor.split'),
+      toggleNavigator: t('menu.toggleNavigator'), undo: t('menu.undo'), view: t('menu.view'), window: t('menu.window'), zhCN: t('language.zh-CN'),
+    }
   }
 
   async function rebuild() {
-    if (!isTauri()) return
-    const currentGeneration = ++generation
-    const appName = await getName()
-    const applicationMenu = await Submenu.new({
-      text: appName,
-      items: [
-        await PredefinedMenuItem.new({ item: { About: null } }),
-        await separator(),
-        await PredefinedMenuItem.new({ item: 'Services' }),
-        await separator(),
-        await PredefinedMenuItem.new({ item: 'Hide' }),
-        await PredefinedMenuItem.new({ item: 'HideOthers' }),
-        await PredefinedMenuItem.new({ item: 'ShowAll' }),
-        await separator(),
-        await PredefinedMenuItem.new({ item: 'Quit' }),
-      ],
+    if (!window.loomark) return
+    await window.loomark.updateNativeMenu({
+      activeDocument: options.activeDocument.value,
+      dirty: options.dirty.value,
+      labels: labels(),
+      locale: options.locale.value,
+      mode: options.mode.value,
+      navigatorCollapsed: options.navigatorCollapsed.value,
+      richViewsAvailable: options.richViewsAvailable.value,
+      theme: options.theme.value,
     })
-    const open = await MenuItem.new({ id: 'open', text: t('menu.open'), accelerator: 'CmdOrCtrl+O', action: run(options.openDocument) })
-    const save = await MenuItem.new({ id: 'save', text: t('menu.save'), accelerator: 'CmdOrCtrl+S', enabled: options.dirty.value, action: run(options.saveActiveDocument) })
-    const print = await MenuItem.new({ id: 'print', text: t('menu.print'), accelerator: 'CmdOrCtrl+P', enabled: options.activeDocument.value, action: run(options.printDocument) })
-    const close = await MenuItem.new({ id: 'close-tab', text: t('menu.closeTab'), accelerator: 'CmdOrCtrl+W', enabled: options.activeDocument.value, action: run(options.closeActiveDocument) })
-    const fileMenu = await Submenu.new({ text: t('menu.file'), items: [open, save, await separator(), print, await separator(), close] })
-
-    const editMenu = await Submenu.new({
-      text: t('menu.edit'),
-      items: [
-        await PredefinedMenuItem.new({ item: 'Undo', text: t('menu.undo') }),
-        await PredefinedMenuItem.new({ item: 'Redo', text: t('menu.redo') }),
-        await separator(),
-        await PredefinedMenuItem.new({ item: 'Cut', text: t('menu.cut') }),
-        await PredefinedMenuItem.new({ item: 'Copy', text: t('menu.copy') }),
-        await PredefinedMenuItem.new({ item: 'Paste', text: t('menu.paste') }),
-        await PredefinedMenuItem.new({ item: 'SelectAll', text: t('menu.selectAll') }),
-      ],
-    })
-
-    const modeItems = await Promise.all((['source', 'reading', 'split'] as const).map((mode) =>
-      CheckMenuItem.new({ id: `mode-${mode}`, text: t(`editor.${mode}`), checked: options.mode.value === mode, enabled: options.activeDocument.value, action: run(() => options.setMode(mode)) }),
-    ))
-    const navigator = await MenuItem.new({ id: 'toggle-navigator', text: t('menu.toggleNavigator'), accelerator: 'CmdOrCtrl+Shift+B', action: run(() => options.setNavigatorCollapsed(!options.navigatorCollapsed.value)) })
-    const viewMenu = await Submenu.new({ text: t('menu.view'), items: [...modeItems, await separator(), navigator] })
-
-    const themeItems = await Promise.all((['paper', 'night'] as const).map((theme) =>
-      CheckMenuItem.new({ id: `theme-${theme}`, text: t(`theme.${theme}`), checked: options.theme.value === theme, action: run(() => options.setTheme(theme)) }),
-    ))
-    const appearanceMenu = await Submenu.new({ text: t('menu.appearance'), items: themeItems })
-
-    const localeItems = await Promise.all((['zh-CN', 'en-US'] as const).map((locale) =>
-      CheckMenuItem.new({ id: `locale-${locale}`, text: t(`language.${locale}`), checked: options.locale.value === locale, action: run(() => options.setLocale(locale)) }),
-    ))
-    const languageMenu = await Submenu.new({ text: t('menu.language'), items: localeItems })
-    const windowMenu = await Submenu.new({ text: t('menu.window'), items: [await PredefinedMenuItem.new({ item: 'Fullscreen', text: t('menu.fullscreen') })] })
-    const menu = await Menu.new({ items: [applicationMenu, fileMenu, editMenu, viewMenu, appearanceMenu, languageMenu, windowMenu] })
-
-    if (currentGeneration !== generation) {
-      await menu.close()
-      return
-    }
-    const previousMenu = await menu.setAsAppMenu()
-    const retiredMenu = previousMenu ?? activeMenu
-    if (retiredMenu && retiredMenu.id !== menu.id) await retiredMenu.close()
-    activeMenu = menu
   }
 
-  onMounted(() => { void rebuild() })
+  function handleMenuAction(action: NativeMenuAction) {
+    if (action === 'open') void options.openDocument()
+    else if (action === 'open-log-directory') void options.openLogDirectory()
+    else if (action === 'save') void options.saveActiveDocument()
+    else if (action === 'print') options.printDocument()
+    else if (action === 'close-tab') options.closeActiveDocument()
+    else if (action === 'mode-source') options.setMode('source')
+    else if (action === 'mode-reading') options.setMode('reading')
+    else if (action === 'mode-split') options.setMode('split')
+    else if (action === 'toggle-navigator') options.setNavigatorCollapsed(!options.navigatorCollapsed.value)
+    else if (action === 'theme-paper') options.setTheme('paper')
+    else if (action === 'theme-night') options.setTheme('night')
+    else if (action === 'locale-zh-CN') options.setLocale('zh-CN')
+    else if (action === 'locale-en-US') options.setLocale('en-US')
+  }
+
+  onMounted(() => {
+    removeMenuActionListener = window.loomark?.onNativeMenuAction(handleMenuAction) ?? null
+    void rebuild()
+  })
   watch(
-    [options.activeDocument, options.dirty, options.locale, options.mode, options.navigatorCollapsed, options.theme],
+    [options.activeDocument, options.dirty, options.locale, options.mode, options.navigatorCollapsed, options.richViewsAvailable, options.theme],
     () => { void rebuild() },
   )
-  onBeforeUnmount(() => { void activeMenu?.close() })
+  onBeforeUnmount(() => { removeMenuActionListener?.() })
 }

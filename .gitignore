@@ -4,7 +4,6 @@ node_modules/
 .pnpm-store/
 dist/
 .vite/
+out/
 .benchmark-fixtures/
-src-tauri/target/
-src-tauri/gen/
 .DS_Store

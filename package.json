@@ -3,13 +3,14 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "main": ".vite/build/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build",
-    "tauri:build:debug": "tauri build --debug",
-    "typecheck": "vue-tsc --noEmit",
+    "electron:dev": "electron-forge start",
+    "electron:package": "electron-forge package",
+    "electron:make": "electron-forge make",
+    "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.electron.json",
     "test:run": "vitest run",
     "test": "vitest",
     "benchmark:fixtures": "node scripts/generate-benchmark-file.mjs"
@@ -21,8 +22,6 @@
     "@codemirror/view": "^6.36.5",
     "@lucide/vue": "1.26.0",
     "@tailwindcss/vite": "4.3.3",
-    "@tauri-apps/api": "^2.3.0",
-    "@tauri-apps/plugin-dialog": "^2.2.0",
     "markdown-it": "14.3.0",
     "reka-ui": "2.10.1",
     "tailwindcss": "4.3.3",
@@ -30,14 +29,31 @@
     "vue-i18n": "11.4.7"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.3.1",
+    "@electron-forge/cli": "7.11.2",
+    "@electron-forge/maker-deb": "7.11.2",
+    "@electron-forge/maker-dmg": "7.11.2",
+    "@electron-forge/maker-rpm": "7.11.2",
+    "@electron-forge/maker-squirrel": "7.11.2",
+    "@electron-forge/maker-zip": "7.11.2",
+    "@electron-forge/plugin-vite": "7.11.2",
     "@types/markdown-it": "14.1.2",
+    "@types/node": "^20.19.43",
     "@vitejs/plugin-vue": "^5.2.1",
     "@vue/test-utils": "^2.4.6",
+    "electron": "41.7.1",
     "jsdom": "^26.0.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.7",
     "vitest": "^3.0.5",
     "vue-tsc": "^2.2.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "electron-winstaller",
+      "esbuild",
+      "fs-xattr",
+      "macos-alias"
+    ]
   }
 }

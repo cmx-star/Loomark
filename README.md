@@ -2,7 +2,7 @@
 
 [English](README.en.md)
 
-Loomark 是一个开源、local-first 的 Markdown 桌面编辑器，基于 Vue 3、Tauri 2 与 CodeMirror 6 构建。它以原始 Markdown 为唯一文档状态，作为原生桌面应用运行，而不是网页应用包装。
+Loomark 是一个开源、local-first 的 Markdown 桌面编辑器，基于 Vue 3、Electron、TypeScript 与 CodeMirror 6 构建。它以原始 Markdown 为唯一文档状态，作为本地桌面应用运行，而不是浏览器页面。
 
 默认界面为简体中文，当前提供 English 作为首个备用语言。
 
@@ -34,11 +34,11 @@ Loomark 当前目标是支持不超过 50 MiB 的 Markdown 文件：
 
 - Node.js 20 LTS 或更高版本
 - pnpm 9 或更高版本
-- Rust stable，以及 Tauri 2 所需的平台前置依赖
+- Electron 41 的平台前置依赖
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm tauri:dev
+pnpm electron:dev
 ```
 
 常用检查：
@@ -47,13 +47,13 @@ pnpm tauri:dev
 pnpm typecheck
 pnpm test:run
 pnpm build
-cargo check --manifest-path src-tauri/Cargo.toml
+pnpm electron:package
 ```
 
 生成桌面安装包：
 
 ```bash
-pnpm tauri:build
+pnpm electron:make
 ```
 
 ## 路线图
@@ -69,6 +69,8 @@ Loomark 以本地优先为原则，当前文档操作都在本机完成。未来
 ## 身份迁移
 
 开发原型曾从 Marko 更名为 Loomark。新的桌面安装包使用 Bundle Identifier `io.md.loomark`。浏览器本地会话和语言设置在可访问时会迁移一次；操作系统会将新的 Bundle Identifier 视为独立应用，因此请在 Loomark 中检查本地文档前保留旧原型安装。
+
+开发、打包和发布链路均使用 Electron。
 
 ## 参与贡献
 

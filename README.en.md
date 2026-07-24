@@ -2,7 +2,7 @@
 
 [简体中文](README.md)
 
-Loomark is an open-source, local-first Markdown desktop editor built with Vue 3, Tauri 2, and CodeMirror 6. It runs as a native desktop application, not a web-app wrapper, and keeps Markdown source as the canonical document state.
+Loomark is an open-source, local-first Markdown desktop editor built with Vue 3, Electron, TypeScript, and CodeMirror 6. It runs as a local desktop application rather than a browser page, and keeps Markdown source as the canonical document state.
 
 The default interface language is Simplified Chinese. English is currently the first alternate locale.
 
@@ -34,11 +34,11 @@ Prerequisites:
 
 - Node.js 20 LTS or newer
 - pnpm 9 or newer
-- Rust stable and the platform prerequisites required by Tauri 2
+- the platform prerequisites required by Electron 41
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm tauri:dev
+pnpm electron:dev
 ```
 
 Useful checks:
@@ -47,13 +47,13 @@ Useful checks:
 pnpm typecheck
 pnpm test:run
 pnpm build
-cargo check --manifest-path src-tauri/Cargo.toml
+pnpm electron:package
 ```
 
 Create a distributable desktop bundle with:
 
 ```bash
-pnpm tauri:build
+pnpm electron:make
 ```
 
 ## Roadmap
@@ -69,6 +69,8 @@ Please report security issues through [GitHub Security Advisories](https://githu
 ## Identity Migration
 
 The development prototype was renamed from Marko to Loomark. New desktop bundles use the Bundle Identifier `io.md.loomark`. Browser-local session and locale keys are migrated once when they remain accessible; operating systems treat a changed Bundle Identifier as a separate application identity, so keep the previous prototype installation until local documents have been checked in Loomark.
+
+Electron is the development, packaging, and release path.
 
 ## Contributing
 

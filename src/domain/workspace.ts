@@ -1,4 +1,4 @@
-import type { LoadedDocument } from '@/domain/document'
+import type { DocumentInspection, DocumentMetrics, LoadedDocument } from '@/domain/document'
 
 export type EditorMode = 'source' | 'reading' | 'split'
 export type ThemeName = 'paper' | 'night'
@@ -8,6 +8,7 @@ export interface WorkspaceDocument extends LoadedDocument {
   originalContent: string
   dirty: boolean
   mode: EditorMode
+  sourceReady: boolean
   title: string
 }
 
@@ -34,6 +35,23 @@ export function createWorkspaceDocument(document: LoadedDocument, mode: EditorMo
     originalContent: document.content,
     dirty: false,
     mode,
+    sourceReady: true,
+    title: documentTitle(document.path),
+  }
+}
+
+export function createProgressiveWorkspaceDocument(
+  document: DocumentInspection,
+  previewContent: string,
+): WorkspaceDocument {
+  return {
+    ...document,
+    content: previewContent,
+    id: document.path,
+    originalContent: previewContent,
+    dirty: false,
+    mode: 'source',
+    sourceReady: false,
     title: documentTitle(document.path),
   }
 }
@@ -52,6 +70,21 @@ export function reloadWorkspaceDocument(document: WorkspaceDocument, loaded: Loa
     id: document.id,
     title: document.title,
   }
+}
+
+export function applyProgressiveMetrics(document: WorkspaceDocument, metrics: DocumentMetrics): WorkspaceDocument {
+  return {
+    ...document,
+    byteSize: metrics.byteSize,
+    lineCount: metrics.lineCount,
+    longestLineBytes: metrics.longestLineBytes,
+    preflightMilliseconds: metrics.preflightMilliseconds,
+    readMilliseconds: metrics.readMilliseconds,
+  }
+}
+
+export function supportsRichDocumentViews(document: WorkspaceDocument): boolean {
+  return document.sourceReady && document.strategy === 'full'
 }
 
 export function hasExternalContentChanged(document: WorkspaceDocument, diskContent: string): boolean {

@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import type { LoadedDocument } from '@/domain/document'
+import type { DocumentInspection, LoadedDocument } from '@/domain/document'
 import {
+  applyProgressiveMetrics,
   closeWorkspaceDocument,
   createSession,
+  createProgressiveWorkspaceDocument,
   createWorkspaceDocument,
   hasExternalContentChanged,
   reloadWorkspaceDocument,
+  supportsRichDocumentViews,
   updateWorkspaceDocument,
 } from '@/domain/workspace'
 
@@ -18,6 +21,13 @@ const loaded: LoadedDocument = {
   preflightMilliseconds: 1,
   readMilliseconds: 2,
   strategy: 'full',
+}
+
+const progressiveInspection: DocumentInspection = {
+  path: '/notes/large.md',
+  byteSize: 10 * 1024 * 1024 + 1,
+  preflightMilliseconds: 1,
+  strategy: 'progressive',
 }
 
 describe('workspace document state', () => {
@@ -53,6 +63,35 @@ describe('workspace document state', () => {
       mode: 'split',
       originalContent: '# External version\n',
     })
+  })
+
+  it('keeps a progressive document as a bounded non-editable preview after metrics are measured', () => {
+    const preview = createProgressiveWorkspaceDocument(progressiveInspection, '# Preview\n')
+    const measured = applyProgressiveMetrics(preview, {
+      byteSize: progressiveInspection.byteSize,
+      lineCount: 1,
+      longestLineBytes: 17,
+      preflightMilliseconds: 1,
+      readMilliseconds: 4,
+    })
+
+    expect(preview).toMatchObject({
+      content: '# Preview\n',
+      dirty: false,
+      mode: 'source',
+      sourceReady: false,
+    })
+    expect(preview).not.toHaveProperty('lineCount')
+    expect(preview).not.toHaveProperty('longestLineBytes')
+    expect(measured).toMatchObject({
+      content: '# Preview\n',
+      lineCount: 1,
+      longestLineBytes: 17,
+      mode: 'source',
+      sourceReady: false,
+    })
+    expect(supportsRichDocumentViews(measured)).toBe(false)
+    expect(supportsRichDocumentViews(createWorkspaceDocument(loaded))).toBe(true)
   })
 
   it.each([

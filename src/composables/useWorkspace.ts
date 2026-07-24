@@ -1,16 +1,17 @@
-import { invoke, isTauri } from '@tauri-apps/api/core'
-import { open } from '@tauri-apps/plugin-dialog'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { computed, onBeforeUnmount, onMounted, shallowRef, watch } from 'vue'
+import { diagnosticDocumentName, diagnosticErrorMessage, diagnosticFailureReason, logDiagnostic } from '@/diagnostics'
 import { i18n } from '@/i18n'
 import type { DirectoryListing } from '@/domain/directory'
-import type { DocumentInspection, LoadedDocument } from '@/domain/document'
+import type { DocumentInspection, DocumentMetrics, LoadedDocument } from '@/domain/document'
 import {
+  applyProgressiveMetrics,
   closeWorkspaceDocument,
   createSession,
+  createProgressiveWorkspaceDocument,
   createWorkspaceDocument,
   hasExternalContentChanged,
   reloadWorkspaceDocument,
+  supportsRichDocumentViews,
   type EditorMode,
   type ThemeName,
   type WorkspaceDocument,
@@ -65,15 +66,19 @@ export function useWorkspace() {
     return document && externalChangePaths.value.includes(document.path) ? document : null
   })
   let directoryRequest = 0
-  let unlistenDocumentChanges: UnlistenFn | null = null
+  let unlistenDocumentChanges: (() => void) | null = null
   let watcherStarted = false
   const processingExternalPaths = new Set<string>()
 
-  async function requestDirectory(command: 'browse_markdown_directory' | 'list_markdown_siblings', path: string) {
+  async function requestDirectory(command: 'browse' | 'siblings', path: string) {
     const request = ++directoryRequest
     directoryError.value = null
     try {
-      const listing = await invoke<DirectoryListing>(command, { path })
+      const desktop = window.loomark
+      if (!desktop) throw new Error('Desktop file access is unavailable.')
+      const listing = command === 'browse'
+        ? await desktop.browseMarkdownDirectory(path)
+        : await desktop.listMarkdownSiblings(path)
       if (request === directoryRequest) directoryListing.value = listing
     } catch (cause) {
       if (request !== directoryRequest) return
@@ -83,7 +88,7 @@ export function useWorkspace() {
   }
 
   async function browseDirectory(path: string) {
-    await requestDirectory('browse_markdown_directory', path)
+    await requestDirectory('browse', path)
   }
 
   function persistSession() {
@@ -105,11 +110,14 @@ export function useWorkspace() {
 
   async function handleDocumentFileChange(path: string) {
     if (processingExternalPaths.has(path)) return
-    if (!documents.value.some((document) => document.path === path)) return
+    const existing = documents.value.find((document) => document.path === path)
+    if (!existing || !existing.sourceReady) return
 
     processingExternalPaths.add(path)
     try {
-      const loaded = await invoke<LoadedDocument>('read_document', { path })
+      const desktop = window.loomark
+      if (!desktop) throw new Error('Desktop file access is unavailable.')
+      const loaded = await desktop.readDocument(path)
       const current = documents.value.find((document) => document.path === path)
       if (current && hasExternalContentChanged(current, loaded.content)) markExternalChange(path)
     } catch (cause) {
@@ -120,9 +128,9 @@ export function useWorkspace() {
   }
 
   async function syncDocumentWatcher() {
-    if (!watcherStarted || !isTauri()) return
+    if (!watcherStarted || !window.loomark) return
     try {
-      await invoke('watch_documents', { paths: documents.value.map((document) => document.path) })
+      await window.loomark.watchDocuments(documents.value.map((document) => document.path))
       fileWatchError.value = null
     } catch (cause) {
       fileWatchError.value = cause instanceof Error ? cause.message : String(cause)
@@ -130,10 +138,10 @@ export function useWorkspace() {
   }
 
   async function startDocumentWatcher() {
-    if (!isTauri()) return
+    if (!window.loomark) return
     try {
-      unlistenDocumentChanges = await listen<string>('document-file-changed', (event) => {
-        void handleDocumentFileChange(event.payload)
+      unlistenDocumentChanges = window.loomark.onDocumentChanged((path) => {
+        void handleDocumentFileChange(path)
       })
       watcherStarted = true
       await syncDocumentWatcher()
@@ -146,35 +154,80 @@ export function useWorkspace() {
     const existing = documents.value.find((document) => document.path === path)
     if (existing) {
       activeDocumentId.value = existing.id
+      logDiagnostic('info', 'document.load.reused-open-document', { document: diagnosticDocumentName(path) })
       return
     }
 
     isLoading.value = true
     error.value = null
+    logDiagnostic('info', 'document.load.started', { document: diagnosticDocumentName(path), mode })
     try {
-      const inspection = await invoke<DocumentInspection>('inspect_document', { path })
+      const desktop = window.loomark
+      if (!desktop) throw new Error('Desktop file access is unavailable.')
+      const inspection = await desktop.inspectDocument(path)
+      logDiagnostic('info', 'document.inspect.completed', {
+        byteSize: inspection.byteSize,
+        document: diagnosticDocumentName(path),
+        milliseconds: inspection.preflightMilliseconds.toFixed(1),
+        strategy: inspection.strategy,
+      })
       if (inspection.strategy === 'unsupported') {
         error.value = i18n.global.t('errors.maxSize')
+        logDiagnostic('warn', 'document.load.unsupported', { byteSize: inspection.byteSize, document: diagnosticDocumentName(path) })
         return
       }
-      const loaded = await invoke<LoadedDocument>('read_document', { path })
+      if (inspection.strategy === 'progressive') {
+        const preview = await desktop.readDocumentPreview(path)
+        logDiagnostic('info', 'document.preview.completed', { characters: preview.length, document: diagnosticDocumentName(path) })
+        const document = createProgressiveWorkspaceDocument(inspection, preview)
+        documents.value = [...documents.value, document]
+        activeDocumentId.value = document.id
+        persistSession()
+        void measureProgressiveDocument(document.id, path)
+        return
+      }
+      const loaded = await desktop.readDocument(path)
+      logDiagnostic('info', 'document.read.completed', {
+        document: diagnosticDocumentName(path),
+        milliseconds: loaded.readMilliseconds?.toFixed(1),
+      })
       const document = createWorkspaceDocument(loaded, mode)
       documents.value = [...documents.value, document]
       activeDocumentId.value = document.id
       persistSession()
+      logDiagnostic('info', 'document.load.completed', { document: diagnosticDocumentName(path), sourceReady: document.sourceReady })
     } catch (cause) {
-      error.value = cause instanceof Error ? cause.message : String(cause)
+      const message = diagnosticErrorMessage(cause)
+      error.value = message
+      logDiagnostic('error', 'document.load.failed', { document: diagnosticDocumentName(path), reason: diagnosticFailureReason(cause) })
     } finally {
       isLoading.value = false
+      logDiagnostic('info', 'document.load.settled', { document: diagnosticDocumentName(path), isLoading: false })
+    }
+  }
+
+  async function measureProgressiveDocument(id: string, path: string) {
+    try {
+      const desktop = window.loomark
+      if (!desktop) throw new Error('Desktop file access is unavailable.')
+      const metrics = await desktop.measureDocument(path)
+      documents.value = documents.value.map((document) =>
+        document.id === id && !document.sourceReady
+          ? applyProgressiveMetrics(document, metrics)
+          : document,
+      )
+      logDiagnostic('info', 'document.progressive-metrics.completed', {
+        document: diagnosticDocumentName(path),
+        milliseconds: metrics.readMilliseconds?.toFixed(1),
+      })
+    } catch (cause) {
+      logDiagnostic('warn', 'document.progressive-metrics.failed', { document: diagnosticDocumentName(path), reason: diagnosticFailureReason(cause) })
     }
   }
 
   async function openDocument() {
-    const selectedPath = await open({
-      multiple: false,
-      filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'mdown', 'mkdn', 'mdtxt'] }],
-    })
-    if (!selectedPath || Array.isArray(selectedPath)) return
+    const selectedPath = await window.loomark?.selectMarkdownFile()
+    if (!selectedPath) return
     await loadPath(selectedPath)
   }
 
@@ -196,7 +249,7 @@ export function useWorkspace() {
 
   function updateActiveDocument(content: string) {
     const active = activeDocument.value
-    if (!active) return
+    if (!active || !active.sourceReady) return
     documents.value = documents.value.map((document) =>
       document.id === active.id ? updateWorkspaceDocument(document, content) : document,
     )
@@ -204,7 +257,7 @@ export function useWorkspace() {
 
   function setMode(mode: EditorMode) {
     const active = activeDocument.value
-    if (!active) return
+    if (!active || (mode !== 'source' && !supportsRichDocumentViews(active))) return
     documents.value = documents.value.map((document) =>
       document.id === active.id ? { ...document, mode } : document,
     )
@@ -227,14 +280,26 @@ export function useWorkspace() {
     documents.value = documents.value.map((document) =>
       document.id === active.id ? { ...document, editorMilliseconds: milliseconds } : document,
     )
+    logDiagnostic('info', 'editor.initialization.recorded', { document: diagnosticDocumentName(active.path), milliseconds: milliseconds.toFixed(1) })
+  }
+
+  function recordEditorFailure(message: string) {
+    const active = activeDocument.value
+    error.value = i18n.global.t('errors.editorInitialization')
+    logDiagnostic('error', 'editor.initialization.reported-failed', {
+      document: active ? diagnosticDocumentName(active.path) : 'none',
+      reason: diagnosticFailureReason(message),
+    })
   }
 
   async function saveActiveDocument() {
     const active = activeDocument.value
-    if (!active || !active.dirty) return
+    if (!active || !active.sourceReady || !active.dirty) return
     error.value = null
     try {
-      await invoke('save_document', { path: active.path, content: active.content })
+      const desktop = window.loomark
+      if (!desktop) throw new Error('Desktop file access is unavailable.')
+      await desktop.saveDocument(active.path, active.content)
       documents.value = documents.value.map((document) =>
         document.id === active.id
           ? { ...document, originalContent: document.content, dirty: false }
@@ -255,7 +320,9 @@ export function useWorkspace() {
     isLoading.value = true
     error.value = null
     try {
-      const loaded = await invoke<LoadedDocument>('read_document', { path })
+      const desktop = window.loomark
+      if (!desktop) throw new Error('Desktop file access is unavailable.')
+      const loaded = await desktop.readDocument(path)
       documents.value = documents.value.map((document) =>
         document.path === path ? reloadWorkspaceDocument(document, loaded) : document,
       )
@@ -271,7 +338,11 @@ export function useWorkspace() {
 
   async function restoreSession() {
     const session = readSession()
-    if (!session) return
+    if (!session) {
+      logDiagnostic('info', 'session.restore.skipped')
+      return
+    }
+    logDiagnostic('info', 'session.restore.started', { documents: session.documents.length })
     theme.value = session.theme === 'night' ? 'night' : 'paper'
     navigatorCollapsed.value = session.navigatorCollapsed === true
     for (const document of session.documents) {
@@ -280,6 +351,7 @@ export function useWorkspace() {
     if (session.activeDocumentId && documents.value.some((document) => document.id === session.activeDocumentId)) {
       activeDocumentId.value = session.activeDocumentId
     }
+    logDiagnostic('info', 'session.restore.completed', { documents: documents.value.length })
   }
 
   function handleSaveShortcut(event: KeyboardEvent) {
@@ -298,7 +370,7 @@ export function useWorkspace() {
     () => activeDocument.value?.path,
     (path) => {
       if (path) {
-        void requestDirectory('list_markdown_siblings', path)
+        void requestDirectory('siblings', path)
         return
       }
       directoryRequest += 1
@@ -314,7 +386,7 @@ export function useWorkspace() {
   onBeforeUnmount(() => {
     window.removeEventListener('keydown', handleSaveShortcut)
     unlistenDocumentChanges?.()
-    if (watcherStarted && isTauri()) void invoke('watch_documents', { paths: [] })
+    if (watcherStarted && window.loomark) void window.loomark.watchDocuments([])
   })
 
   return {
@@ -333,6 +405,7 @@ export function useWorkspace() {
     openPath: loadPath,
     openDocument,
     recordEditorInitialization,
+    recordEditorFailure,
     reloadExternalChange,
     saveActiveDocument,
     selectDocument,

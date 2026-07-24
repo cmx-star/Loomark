@@ -9,24 +9,10 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  verify-electron:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Tauri Linux prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes \
-            build-essential \
-            curl \
-            file \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
-            patchelf \
-            wget
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -34,9 +20,8 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test:run
       - run: pnpm build
-      - run: cargo check --manifest-path src-tauri/Cargo.toml
+      - run: pnpm electron:package

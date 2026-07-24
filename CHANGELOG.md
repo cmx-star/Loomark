@@ -11,7 +11,7 @@ All notable changes to Loomark are documented in this file.
 
 ### Changed
 
-- Renamed the application, package, Rust crate, benchmark fixtures, and Tauri identity from Marko to Loomark.
+- Renamed the application, package, benchmark fixtures, and desktop identity from Marko to Loomark.
 - Changed the Bundle Identifier to `io.md.loomark` and migrated accessible browser-local session and locale keys on first launch.
 
 ## [0.0.1] - 2026-07-24

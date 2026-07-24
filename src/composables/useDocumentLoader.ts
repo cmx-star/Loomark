@@ -1,5 +1,3 @@
-import { invoke } from '@tauri-apps/api/core'
-import { open } from '@tauri-apps/plugin-dialog'
 import { computed, shallowRef } from 'vue'
 import type { DocumentInspection, LoadedDocument } from '@/domain/document'
 
@@ -15,11 +13,8 @@ export function useDocumentLoader() {
   const isLoading = computed(() => phase.value === 'preflighting' || phase.value === 'loading')
 
   async function openDocument() {
-    const selectedPath = await open({
-      multiple: false,
-      filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'mdown', 'mkdn', 'mdtxt'] }],
-    })
-    if (!selectedPath || Array.isArray(selectedPath)) return
+    const selectedPath = await window.loomark?.selectMarkdownFile()
+    if (!selectedPath) return
     await loadPath(selectedPath)
   }
 
@@ -30,7 +25,9 @@ export function useDocumentLoader() {
     preview.value = ''
 
     try {
-      const nextInspection = await invoke<DocumentInspection>('inspect_document', { path })
+      const desktop = window.loomark
+      if (!desktop) throw new Error('Desktop file access is unavailable.')
+      const nextInspection = await desktop.inspectDocument(path)
       inspection.value = nextInspection
       if (nextInspection.strategy === 'unsupported') {
         phase.value = 'unsupported'
@@ -38,12 +35,12 @@ export function useDocumentLoader() {
       }
 
       if (nextInspection.strategy === 'progressive') {
-        preview.value = await invoke<string>('read_document_preview', { path })
+        preview.value = await desktop.readDocumentPreview(path)
         phase.value = 'preview'
       }
 
       phase.value = 'loading'
-      document.value = await invoke<LoadedDocument>('read_document', { path })
+      document.value = await desktop.readDocument(path)
       phase.value = 'ready'
     } catch (cause) {
       phase.value = 'error'

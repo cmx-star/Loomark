@@ -14,4 +14,4 @@ Reports will be acknowledged within seven days. Please allow time for investigat
 
 ## Scope
 
-Reports are especially useful for issues involving local file access, Tauri commands, Markdown rendering, plugin permissions, export paths, and any future network or AI integration.
+Reports are especially useful for issues involving local file access, Electron IPC, Markdown rendering, plugin permissions, export paths, and any future network or AI integration.

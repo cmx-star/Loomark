@@ -3,7 +3,7 @@
 ## Product
 
 - Loomark is an open-source, local-first Markdown desktop editor.
-- The technical baseline is Vue 3, TypeScript, Tauri 2, and CodeMirror 6.
+- The active technical baseline is Vue 3, TypeScript, Electron 41, Electron Forge, and CodeMirror 6.
 - Markdown source is the canonical document state. Opening and saving without edits must preserve bytes whenever the filesystem allows it.
 
 ## Large Files
@@ -21,5 +21,5 @@
 
 ## Verification
 
-- Run the smallest relevant tests first, then `pnpm typecheck`, `pnpm test:run`, `pnpm build`, and `cargo check --manifest-path src-tauri/Cargo.toml` for changes that affect the M0 prototype.
+- Run the smallest relevant tests first, then `pnpm typecheck`, `pnpm test:run`, `pnpm build`, and `pnpm electron:package` for desktop changes.
 - Keep tests behavior-focused. For file loading, cover classification boundaries and byte-exact no-edit round trips.

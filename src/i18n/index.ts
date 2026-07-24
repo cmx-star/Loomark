@@ -8,6 +8,7 @@ export const messages = {
     app: {
       emptyLabel: '本地 Markdown 工作区',
       emptyText: '打开 Markdown 文件后，可以编辑源码、阅读排版结果，或在分屏中同时进行。',
+      progressivePreview: '正在显示文件开头，完整源码在后台加载。',
       workspace: '文档工作区',
     },
     menu: {
@@ -20,6 +21,7 @@ export const messages = {
       fullscreen: '全屏',
       language: '语言',
       open: '打开...',
+      openLogDirectory: '打开日志目录',
       paste: '粘贴',
       print: '打印...',
       redo: '重做',
@@ -55,6 +57,7 @@ export const messages = {
       title: '检测到外部文件变更',
     },
     errors: {
+      editorInitialization: 'Markdown 编辑器初始化失败。请查看 Loomark 日志以获取详细原因。',
       maxSize: 'M1 支持最大 50 MiB 的 Markdown 文件。',
     },
     language: {
@@ -71,9 +74,12 @@ export const messages = {
       loadReport: '加载报告',
       phase: '阶段',
       preflight: '预检',
+      full: '完整加载',
+      progressive: '渐进加载',
       read: '读取',
       ready: '就绪',
       size: '大小',
+      unsupported: '不支持',
       waiting: '等待',
     },
     tabs: {
@@ -99,6 +105,7 @@ export const messages = {
     app: {
       emptyLabel: 'Local Markdown workspace',
       emptyText: 'Open a Markdown file to edit source, read it, or work side by side.',
+      progressivePreview: 'Showing the start of the file while the full source loads in the background.',
       workspace: 'Document workspace',
     },
     menu: {
@@ -111,6 +118,7 @@ export const messages = {
       fullscreen: 'Fullscreen',
       language: 'Language',
       open: 'Open...',
+      openLogDirectory: 'Open Log Directory',
       paste: 'Paste',
       print: 'Print...',
       redo: 'Redo',
@@ -146,6 +154,7 @@ export const messages = {
       title: 'External file change detected',
     },
     errors: {
+      editorInitialization: 'The Markdown editor could not initialize. Check the Loomark log for details.',
       maxSize: 'M1 supports Markdown files up to 50 MiB.',
     },
     language: {
@@ -162,9 +171,12 @@ export const messages = {
       loadReport: 'Load report',
       phase: 'phase',
       preflight: 'preflight',
+      full: 'full load',
+      progressive: 'progressive load',
       read: 'read',
       ready: 'ready',
       size: 'size',
+      unsupported: 'unsupported',
       waiting: 'waiting',
     },
     tabs: {

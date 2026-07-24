@@ -11,8 +11,12 @@ const props = defineProps<{
 
 const metrics = computed(() => props.document ?? props.inspection)
 const { locale, t } = useI18n()
-const strategy = computed(() => metrics.value?.strategy ?? t('status.waiting'))
+const strategy = computed(() => t(`status.${metrics.value?.strategy ?? 'waiting'}`))
 const numberFormat = computed(() => new Intl.NumberFormat(locale.value))
+
+function formatMetric(value: number | undefined): string {
+  return value === undefined ? '-' : numberFormat.value.format(value)
+}
 </script>
 
 <template>
@@ -23,8 +27,8 @@ const numberFormat = computed(() => new Intl.NumberFormat(locale.value))
     </div>
     <dl v-if="metrics" class="metrics">
       <div><dt>{{ t('status.size') }}</dt><dd>{{ formatBytes(metrics.byteSize) }}</dd></div>
-      <div><dt>{{ t('status.lines') }}</dt><dd>{{ numberFormat.format(metrics.lineCount) }}</dd></div>
-      <div><dt>{{ t('status.longestLine') }}</dt><dd>{{ numberFormat.format(metrics.longestLineBytes) }} B</dd></div>
+      <div><dt>{{ t('status.lines') }}</dt><dd>{{ formatMetric(metrics.lineCount) }}</dd></div>
+      <div><dt>{{ t('status.longestLine') }}</dt><dd>{{ metrics.longestLineBytes === undefined ? '-' : `${formatMetric(metrics.longestLineBytes)} B` }}</dd></div>
       <div><dt>{{ t('status.preflight') }}</dt><dd>{{ metrics.preflightMilliseconds.toFixed(1) }} ms</dd></div>
       <div><dt>{{ t('status.read') }}</dt><dd>{{ metrics.readMilliseconds?.toFixed(1) ?? '-' }} ms</dd></div>
       <div><dt>{{ t('status.editor') }}</dt><dd>{{ metrics.editorMilliseconds?.toFixed(1) ?? '-' }} ms</dd></div>

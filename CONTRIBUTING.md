@@ -9,11 +9,11 @@
 
 ## Development setup
 
-Use Node.js 20 LTS or newer, pnpm, Rust stable, and the platform prerequisites for Tauri 2.
+Use Node.js 20 LTS or newer, pnpm, and the platform prerequisites for Electron 41.
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm tauri:dev
+pnpm electron:dev
 ```
 
 Before opening a pull request, run:
@@ -22,7 +22,7 @@ Before opening a pull request, run:
 pnpm typecheck
 pnpm test:run
 pnpm build
-cargo check --manifest-path src-tauri/Cargo.toml
+pnpm electron:package
 ```
 
 ## Pull requests
@@ -30,6 +30,6 @@ cargo check --manifest-path src-tauri/Cargo.toml
 - Keep each pull request focused on one user-visible change or defect.
 - Explain the behavior change, test coverage, and platform limitations.
 - Add or update behavior-focused tests when changing loading, saving, sessions, directory browsing, or localized UI behavior.
-- Do not commit generated `dist`, `node_modules`, or `src-tauri/target` content.
+- Do not commit generated `dist`, `node_modules`, `.vite`, or `out` content.
 
 By submitting a contribution, you agree to license it under Apache-2.0.

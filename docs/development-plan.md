@@ -4,7 +4,7 @@
 
 Loomark is a fast, local-first Markdown editor built as a native desktop application, not a browser wrapper. It keeps Markdown source as the single source of truth so that opening and saving an unchanged document does not create Git noise.
 
-The baseline stack is Vue 3 + TypeScript + Tauri 2 + CodeMirror 6. The project is licensed under Apache-2.0. Public projects including Marko, MarkText/Muya, DOMD, Flux Markdown, Tinta, and Typora are design references only; their code, licenses, and assets must be evaluated individually before reuse.
+The active baseline stack is Vue 3 + TypeScript + Electron 41 + Electron Forge + CodeMirror 6. The project is licensed under Apache-2.0. Public projects including Marko, MarkText/Muya, DOMD, Flux Markdown, Tinta, and Typora are design references only; their code, licenses, and assets must be evaluated individually before reuse.
 
 ## External Reference Provenance
 
@@ -28,7 +28,7 @@ Before importing any external code, asset, or substantial text, record the sourc
 | File size | Default path | Explicitly not promised by default |
 | --- | --- | --- |
 | Up to 10 MiB | Read full source, initialize CodeMirror, permit editing | None beyond normal machine limits |
-| Over 10 MiB to 50 MiB | Preflight metadata, show bounded first chunk, load source in background; source mode only until ready | Immediate full WYSIWYG, split view, full-document diff, full AI context |
+| Over 10 MiB to 50 MiB | Preflight metadata, show bounded first chunk, load source in background; source mode only | Full WYSIWYG, reading/split view, full-document diff, full AI context |
 | Over 50 MiB | Warn and require a deliberate future policy | Supported editing or rendering |
 
 The implementation must preserve the original bytes for an unchanged document. Text normalization, AST serialization, automatic formatter passes, and background encoding conversion cannot run on the default open-save path.
@@ -54,13 +54,14 @@ Cloud providers are first. Provider adapters use a redacted settings store and s
 3. Confirm 50 MiB chooses the progressive path and returns a bounded first chunk.
 4. Record byte size, line count, longest line, read time, and editor initialization time.
 5. Verify a no-edit round trip is byte-exact; future persistence tests may compare SHA-256 hashes without changing the source bytes.
-6. Run TypeScript checks, Vitest, Vite production build, Rust `cargo check`, and a browser-visible development build check.
+6. Run renderer and Electron TypeScript checks, Vitest, Vite production build, Electron Forge packaging, and a desktop-visible development build check.
 
 ## Risks and Mitigations
 
 | Risk | Mitigation | M0 status |
 | --- | --- | --- |
-| WebView/editor memory pressure on large source | Size classification, bounded first chunk, delayed full source allocation | In scope |
+| Desktop renderer/editor memory pressure on large source | Size classification, bounded first chunk, delayed full source allocation | Implemented; Electron native-window measurement remains |
+| Electron Forge Vite plugin is experimental and its transitive package tree carries deprecation notices | Pin Forge 7.11.2, use Forge's documented output contract, keep packaging and native-window checks in CI | Implemented; upgrade only with explicit compatibility verification |
 | Markdown mode conversion creates unwanted Git diffs | Source bytes are canonical; no AST reserialization on save | In scope |
 | File changes outside the app race with edits | Watch only opened documents; compare content after an external save and require an explicit reload or keep decision only when it differs | Implemented; native-window verification remains |
 | Pandoc licensing, binary size, and platform compatibility | Pin a tested sidecar per platform and expose diagnostics | Contract only |
@@ -76,8 +77,8 @@ AI integration, Git UI, executable plugins, a Pandoc download, production visual
 
 - Passed: TypeScript check, Vitest (4 tests), Vite production build, and deterministic 1/10/50 MiB fixture generation.
 - Passed: code splitting reduces the initial application JavaScript bundle to 70.13 kB; the 502.67 kB CodeMirror chunk loads only with the source editor.
-- Blocked by the execution sandbox: `cargo check` cannot resolve `static.crates.io`, and Vite cannot bind `127.0.0.1:1420` for browser-visible verification. These are environment limits, not passing desktop checks.
-- Still required outside this sandbox: `cargo check`, native Tauri file-dialog and progressive-loading exercise using the 50 MiB fixture, system print dialog verification, and screenshot-based desktop/mobile layout verification.
+- Blocked by the execution sandbox: Vite cannot bind `127.0.0.1:1420` for browser-visible verification. This is an environment limit, not a passing desktop check.
+- Still required outside this sandbox: native Electron file-dialog and progressive-loading exercise using the 50 MiB fixture, system print dialog verification, and screenshot-based desktop/mobile layout verification.
 
 ## M1 Foundation (2026-07-24)
 
@@ -93,7 +94,7 @@ The default application locale is `zh-CN`, with `en-US` as the initial alternate
 
 ### Internationalization Validation Evidence
 
-- Passed: locale fallback and explicit English selection tests; TypeScript, Vitest (11 tests), Vite build, and `cargo check`.
+- Passed: locale fallback and explicit English selection tests; TypeScript, Vitest (11 tests), and Vite build.
 - Bundle impact: the initial JavaScript bundle is 239.24 kB (96.35 kB gzip). CodeMirror remains an on-demand editor chunk.
 
 ## M1.1 Desktop Application Shell (planned)
@@ -102,7 +103,7 @@ The primary desktop window must present a restrained application shell rather th
 
 The right side is the document workspace. It owns document tabs and the selected source, reading, or split mode. Reading and split surfaces render Markdown in this workspace; source editing remains available through CodeMirror. The collapsed navigator leaves the workspace usable for focused reading and editing.
 
-File, edit, view, appearance, language, and window commands belong in native Tauri menus where the platform supports them. The application surface may retain only contextual controls that cannot be expressed naturally in a native menu. The existing page-level command toolbar is therefore a transitional implementation, not the target shell.
+File, edit, view, appearance, language, and window commands belong in native Electron menus. The application surface may retain only contextual controls that cannot be expressed naturally in a native menu. The existing page-level command toolbar is therefore a transitional implementation, not the target shell.
 
 File size, line count, loading state, mode, and save state move to a low-interference bottom status bar. This preserves large-file observability without competing with the document workspace.
 
@@ -115,16 +116,24 @@ Internationalization is a cross-cutting requirement for the shell: `zh-CN` remai
 3. Open, save, print, tab, view-mode, theme, and locale commands are reachable through native menus, with application-surface controls limited to document-contextual actions.
 4. The bottom status bar exposes loading and performance information without adding a right-side utility panel.
 5. `zh-CN` and `en-US` render all application-chrome strings from centralized catalogs, persist the chosen locale, and preserve the layout under the longest supported labels.
-6. Native-menu behavior, collapsible navigation, mode switching, theme switching, and locale switching receive a user-visible Tauri verification on supported desktop platforms.
+6. Native-menu behavior, collapsible navigation, mode switching, theme switching, and locale switching receive a user-visible Electron verification on supported desktop platforms.
 
 ### M1.1 Implementation Evidence (2026-07-24)
 
 - Implemented: a persisted collapsible left navigator with tabs for open documents and the current directory, defaulting to the active document's directory, a right-side tabbed document workspace, source/reading/split surfaces, and a compact bottom status bar. The directory section reads only the current level on demand, shows direct child directories plus Markdown files, provides an explicit parent-directory action, caps output at 1,000 entries, and opens files through the existing loading policy. A recursive filesystem tree remains deferred until it has bounded scanning and large-directory virtualization rules.
-- Implemented: File, Edit, View, Appearance, Language, and Window menus are built with the Tauri menu API. All custom titles and labels resolve through the `zh-CN`/`en-US` catalogs, and language, theme, mode, selected-document, dirty, and navigation state rebuild the menu so checked and enabled states remain current.
-- Passed: TypeScript, Vitest (11 tests), Vite production build, `cargo check`, and browser-visible checks for the empty workspace plus navigator collapse/expand.
-- Still required: a user-visible Tauri-window check of operating-system menu rendering, command dispatch, and a loaded document in source/reading/split modes. Browser previews deliberately do not create native application menus.
+- Implemented: File, Edit, View, Appearance, Language, and Window menus are built through a typed Electron IPC bridge. All custom titles and labels resolve through the `zh-CN`/`en-US` catalogs, and language, theme, mode, selected-document, dirty, and navigation state rebuild the menu so checked and enabled states remain current.
+- Passed: TypeScript, Vitest (11 tests), Vite production build, and browser-visible checks for the empty workspace plus navigator collapse/expand.
+- Still required: a user-visible Electron-window check of operating-system menu rendering, command dispatch, and a loaded document in source/reading/split modes. Browser previews deliberately do not create native application menus.
 
 ### M1 Validation Evidence
 
-- Passed: TypeScript check, Vitest (17 tests), Vite production build, `cargo check`, and Rust unit tests.
-- Still required: a user-visible Tauri window check that changes an opened file externally, verifies reload and keep outcomes, and exercises native file dialog, save, session restore, and print interactions.
+- Passed: TypeScript check, Vitest (18 tests), and Vite production build.
+- Still required: a user-visible Electron window check that changes an opened file externally, verifies reload and keep outcomes, and exercises native file dialog, save, session restore, and print interactions.
+
+## Electron Migration (2026-07-24)
+
+Electron 41.7.1 is pinned because it is the final Electron 41 patch compatible with Node 20.19.4. The host uses `contextIsolation`, sandboxing, and disabled `nodeIntegration`; the renderer receives only a typed, allowlisted preload bridge for Markdown dialogs, bounded document I/O, one-level directory listing, non-recursive document watching, diagnostic logs, and native-menu state/actions.
+
+The active scripts are `pnpm electron:dev`, `pnpm electron:package`, and `pnpm electron:make`. GitHub Actions builds unsigned macOS arm64/x64, Linux x64, and Windows x64 artifacts and attaches them to a draft release. No signing or notarization is configured.
+
+Migration verification passed for Vue/Electron type checks, 22 behavior tests, renderer production build, Forge's main/preload/renderer bundle stage, and a local Electron window launch. Native file-dialog, watcher, log-directory, print-dialog, and final installer verification remain required before a production release.

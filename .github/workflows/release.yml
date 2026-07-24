@@ -10,24 +10,24 @@ permissions:
 
 jobs:
   bundle:
-    name: ${{ matrix.name }}
+    name: ${{ matrix.platform }} (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: macOS (Apple Silicon)
-            runner: macos-latest
-            args: --target aarch64-apple-darwin
-          - name: macOS (Intel)
-            runner: macos-latest
-            args: --target x86_64-apple-darwin
-          - name: Linux
+          - platform: macOS
+            arch: arm64
+            runner: macos-14
+          - platform: macOS
+            arch: x64
+            runner: macos-13
+          - platform: Linux
+            arch: x64
             runner: ubuntu-latest
-            args: ""
-          - name: Windows
+          - platform: Windows
+            arch: x64
             runner: windows-latest
-            args: ""
 
     steps:
       - uses: actions/checkout@v4
@@ -38,34 +38,31 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ startsWith(matrix.runner, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-      - name: Install Tauri Linux prerequisites
+      - name: Install Linux package prerequisites
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes \
-            build-essential \
-            curl \
-            file \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
-            patchelf \
-            wget
+          sudo apt-get install --yes fakeroot rpm
       - run: pnpm install --frozen-lockfile
-      - uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: pnpm electron:make -- --arch=${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Loomark ${{ github.ref_name }}
-          releaseDraft: true
+          name: loomark-${{ matrix.platform }}-${{ matrix.arch }}
+          path: out/make/**
+          if-no-files-found: error
+
+  release:
+    needs: bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Loomark ${{ github.ref_name }}
+          draft: true
           prerelease: false
-          generateReleaseNotes: true
-          args: ${{ matrix.args }}
-          uploadUpdaterJson: false
-          uploadUpdaterSignatures: false
+          generate_release_notes: true
+          files: release-assets/**/*
