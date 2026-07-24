@@ -46,6 +46,18 @@ export function updateWorkspaceDocument(document: WorkspaceDocument, content: st
   }
 }
 
+export function reloadWorkspaceDocument(document: WorkspaceDocument, loaded: LoadedDocument): WorkspaceDocument {
+  return {
+    ...createWorkspaceDocument(loaded, document.mode),
+    id: document.id,
+    title: document.title,
+  }
+}
+
+export function hasExternalContentChanged(document: WorkspaceDocument, diskContent: string): boolean {
+  return document.content !== diskContent
+}
+
 export function closeWorkspaceDocument(documents: WorkspaceDocument[], id: string): WorkspaceDocument[] {
   return documents.filter((document) => document.id !== id)
 }

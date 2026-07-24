@@ -47,6 +47,13 @@ export const messages = {
       split: '分屏',
       sourceLabel: 'Markdown 源码编辑器',
     },
+    externalChange: {
+      cleanDescription: '文件已在应用外更新。重新加载将显示磁盘上的最新版本。',
+      dirtyDescription: '文件已在应用外更新。重新加载会丢弃当前未保存的编辑。',
+      keep: '保留当前编辑',
+      reload: '重新加载',
+      title: '检测到外部文件变更',
+    },
     errors: {
       maxSize: 'M1 支持最大 50 MiB 的 Markdown 文件。',
     },
@@ -130,6 +137,13 @@ export const messages = {
       reading: 'Reading',
       split: 'Split',
       sourceLabel: 'Markdown source editor',
+    },
+    externalChange: {
+      cleanDescription: 'This file changed outside Loomark. Reload to show the version on disk.',
+      dirtyDescription: 'This file changed outside Loomark. Reload discards your unsaved edits.',
+      keep: 'Keep current edits',
+      reload: 'Reload',
+      title: 'External file change detected',
     },
     errors: {
       maxSize: 'M1 supports Markdown files up to 50 MiB.',

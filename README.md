@@ -1,44 +1,47 @@
 # Loomark
 
-Loomark is an open-source, local-first Markdown desktop editor built with Vue 3, Tauri 2, and CodeMirror 6. It runs as a native desktop application and keeps Markdown source as the canonical document state.
+[English](README.en.md)
+
+Loomark 是一个开源、local-first 的 Markdown 桌面编辑器，基于 Vue 3、Tauri 2 与 CodeMirror 6 构建。它以原始 Markdown 为唯一文档状态，作为原生桌面应用运行，而不是网页应用包装。
 
 默认界面为简体中文，当前提供 English 作为首个备用语言。
 
-## Current capabilities
+## 当前能力
 
-- Open, edit, explicitly save, and reopen local Markdown files.
-- Source, reading, and split views with independently scrollable source and preview surfaces.
-- Tabs, unsaved-change indication, local session restoration, paper/night themes, and a collapsible workspace navigator.
-- Native application menus for file, edit, view, appearance, language, and window commands.
-- Current-folder navigation that reads one directory level at a time and shows Markdown files plus direct child folders.
-- Markdown preflight metrics for file size, line count, longest line, read time, and editor initialization time.
+- 打开、编辑、显式保存并重新打开本地 Markdown 文件。
+- 提供源码、阅读和分屏模式；分屏中的源码与预览可独立滚动。
+- 多标签、未保存修改提示、本地会话恢复、纸张/夜间主题与可收起的工作区目录。
+- 原生应用菜单：文件、编辑、视图、外观、语言和窗口。
+- 当前目录按层读取，仅显示 Markdown 文件与直接子目录。
+- 监视已打开文档的外部保存。保存后会比较磁盘内容；内容未变时静默忽略，内容不同则提示用户重新加载或保留当前编辑，不会自动替换编辑器内容。
+- 展示 Markdown 预检指标：文件大小、行数、最长行、读取时间和编辑器初始化时间。
 
-## Large-file policy
+## 大文件策略
 
-Loomark currently targets Markdown files up to 50 MiB:
+Loomark 当前目标是支持不超过 50 MiB 的 Markdown 文件：
 
-| File size | Default behavior |
+| 文件大小 | 默认行为 |
 | --- | --- |
-| Up to 10 MiB | Load the complete source into CodeMirror. |
-| Over 10 MiB to 50 MiB | Run metadata preflight, show a bounded preview, then load source in the background. Full preview, diff, and AI context are not the default path. |
-| Over 50 MiB | Outside the current supported range. |
+| 不超过 10 MiB | 将完整源码加载到 CodeMirror。 |
+| 超过 10 MiB 至 50 MiB | 先进行元数据预检，显示有界预览，再在后台加载源码。完整预览、diff 和 AI 上下文不会走默认路径。 |
+| 超过 50 MiB | 超出当前支持范围。 |
 
-Opening and saving an unchanged document does not invoke a save operation, preserving its bytes whenever the filesystem allows it.
+未编辑的文档不会调用保存命令，因此在文件系统允许时会保持原始字节不变。
 
-## Development
+## 开发
 
-Prerequisites:
+前置条件：
 
-- Node.js 20 LTS or newer
-- pnpm 9 or newer
-- Rust stable and the platform prerequisites required by Tauri 2
+- Node.js 20 LTS 或更高版本
+- pnpm 9 或更高版本
+- Rust stable，以及 Tauri 2 所需的平台前置依赖
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm tauri:dev
 ```
 
-Useful checks:
+常用检查：
 
 ```bash
 pnpm typecheck
@@ -47,32 +50,32 @@ pnpm build
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-Create a distributable desktop bundle with:
+生成桌面安装包：
 
 ```bash
 pnpm tauri:build
 ```
 
-## Roadmap
+## 路线图
 
-Planned work includes external-file change handling, Git status/diff, HTML/PDF/DOCX export, declarative plugins with explicit permissions, and opt-in AI writing assistance. See [the development plan](docs/development-plan.md) for scope and constraints.
+后续工作包括 Git 状态/diff、另存为、HTML/PDF/DOCX 导出、带显式权限的声明式插件，以及可选的 AI 写作辅助。约束和阶段计划见[开发计划](docs/development-plan.md)。
 
-## Privacy and security
+## 隐私与安全
 
-Loomark is local-first. Current document operations stay on the local machine. Future AI functionality will require explicit provider and context selection; it is not part of the current release surface.
+Loomark 以本地优先为原则，当前文档操作都在本机完成。未来 AI 功能会要求用户明确选择供应商和上下文范围，不属于当前发布范围。
 
-Please report security issues through [GitHub Security Advisories](https://github.com/cmx-star/noteMD/security/advisories/new), not public issues. See [SECURITY.md](SECURITY.md).
+请通过 [GitHub Security Advisories](https://github.com/cmx-star/noteMD/security/advisories/new) 报告安全问题，不要公开创建 Issue。详见 [SECURITY.md](SECURITY.md)。
 
-## Identity migration
+## 身份迁移
 
-The development prototype was renamed from Marko to Loomark. New desktop bundles use the Bundle Identifier `io.md.loomark`. Browser-local session and locale keys are migrated once when they remain accessible; operating systems treat a changed Bundle Identifier as a separate application identity, so keep the previous prototype installation until local documents have been checked in Loomark.
+开发原型曾从 Marko 更名为 Loomark。新的桌面安装包使用 Bundle Identifier `io.md.loomark`。浏览器本地会话和语言设置在可访问时会迁移一次；操作系统会将新的 Bundle Identifier 视为独立应用，因此请在 Loomark 中检查本地文档前保留旧原型安装。
 
-## Contributing
+## 参与贡献
 
-Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request.
+欢迎贡献。创建 Issue 或 Pull Request 前，请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-## License
+## 许可证
 
 Copyright 2026 Loomark contributors.
 
-Licensed under the [Apache License 2.0](LICENSE).
+本项目采用 [Apache License 2.0](LICENSE) 许可。

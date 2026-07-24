@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { LoadedDocument } from '@/domain/document'
-import { closeWorkspaceDocument, createSession, createWorkspaceDocument, updateWorkspaceDocument } from '@/domain/workspace'
+import {
+  closeWorkspaceDocument,
+  createSession,
+  createWorkspaceDocument,
+  hasExternalContentChanged,
+  reloadWorkspaceDocument,
+  updateWorkspaceDocument,
+} from '@/domain/workspace'
 
 const loaded: LoadedDocument = {
   path: '/notes/example.md',
@@ -35,4 +42,27 @@ describe('workspace document state', () => {
     const second = createWorkspaceDocument({ ...loaded, path: '/notes/second.md' })
     expect(closeWorkspaceDocument([first, second], first.id)).toEqual([second])
   })
+
+  it('reloads from disk only when requested and preserves the selected mode', () => {
+    const changed = updateWorkspaceDocument(createWorkspaceDocument(loaded, 'split'), '# Local edits\n')
+    const reloaded = reloadWorkspaceDocument(changed, { ...loaded, content: '# External version\n' })
+
+    expect(reloaded).toMatchObject({
+      content: '# External version\n',
+      dirty: false,
+      mode: 'split',
+      originalContent: '# External version\n',
+    })
+  })
+
+  it.each([
+    ['an unchanged clean document', createWorkspaceDocument(loaded), loaded.content, false],
+    ['an unchanged dirty document', updateWorkspaceDocument(createWorkspaceDocument(loaded), '# Local edits\n'), '# Local edits\n', false],
+    ['a changed clean document', createWorkspaceDocument(loaded), '# External version\n', true],
+    ['a changed dirty document', updateWorkspaceDocument(createWorkspaceDocument(loaded), '# Local edits\n'), '# External version\n', true],
+    ['a changed progressive document', createWorkspaceDocument({ ...loaded, byteSize: 10 * 1024 * 1024 + 1, strategy: 'progressive' }), '# External version\n', true],
+  ])('prompts only when the external content differs for %s', (_description, document, diskContent, expected) => {
+    expect(hasExternalContentChanged(document, diskContent)).toBe(expected)
+  })
+
 })

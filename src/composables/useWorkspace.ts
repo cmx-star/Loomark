@@ -1,5 +1,6 @@
-import { invoke } from '@tauri-apps/api/core'
+import { invoke, isTauri } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { computed, onBeforeUnmount, onMounted, shallowRef, watch } from 'vue'
 import { i18n } from '@/i18n'
 import type { DirectoryListing } from '@/domain/directory'
@@ -8,6 +9,8 @@ import {
   closeWorkspaceDocument,
   createSession,
   createWorkspaceDocument,
+  hasExternalContentChanged,
+  reloadWorkspaceDocument,
   type EditorMode,
   type ThemeName,
   type WorkspaceDocument,
@@ -47,15 +50,24 @@ export function useWorkspace() {
   const directoryError = shallowRef<string | null>(null)
   const directoryListing = shallowRef<DirectoryListing | null>(null)
   const error = shallowRef<string | null>(null)
+  const fileWatchError = shallowRef<string | null>(null)
   const isLoading = shallowRef(false)
   const navigatorCollapsed = shallowRef(false)
   const theme = shallowRef<ThemeName>('paper')
+  const externalChangePaths = shallowRef<string[]>([])
 
   const activeDocument = computed(() =>
     documents.value.find((document) => document.id === activeDocumentId.value) ?? null,
   )
   const hasUnsavedChanges = computed(() => documents.value.some((document) => document.dirty))
+  const activeExternalChange = computed(() => {
+    const document = activeDocument.value
+    return document && externalChangePaths.value.includes(document.path) ? document : null
+  })
   let directoryRequest = 0
+  let unlistenDocumentChanges: UnlistenFn | null = null
+  let watcherStarted = false
+  const processingExternalPaths = new Set<string>()
 
   async function requestDirectory(command: 'browse_markdown_directory' | 'list_markdown_siblings', path: string) {
     const request = ++directoryRequest
@@ -79,6 +91,55 @@ export function useWorkspace() {
       SESSION_KEY,
       JSON.stringify(createSession(documents.value, activeDocumentId.value, theme.value, navigatorCollapsed.value)),
     )
+  }
+
+  function clearExternalChange(path: string) {
+    externalChangePaths.value = externalChangePaths.value.filter((changedPath) => changedPath !== path)
+  }
+
+  function markExternalChange(path: string) {
+    if (!documents.value.some((document) => document.path === path)) return
+    if (externalChangePaths.value.includes(path)) return
+    externalChangePaths.value = [...externalChangePaths.value, path]
+  }
+
+  async function handleDocumentFileChange(path: string) {
+    if (processingExternalPaths.has(path)) return
+    if (!documents.value.some((document) => document.path === path)) return
+
+    processingExternalPaths.add(path)
+    try {
+      const loaded = await invoke<LoadedDocument>('read_document', { path })
+      const current = documents.value.find((document) => document.path === path)
+      if (current && hasExternalContentChanged(current, loaded.content)) markExternalChange(path)
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : String(cause)
+    } finally {
+      processingExternalPaths.delete(path)
+    }
+  }
+
+  async function syncDocumentWatcher() {
+    if (!watcherStarted || !isTauri()) return
+    try {
+      await invoke('watch_documents', { paths: documents.value.map((document) => document.path) })
+      fileWatchError.value = null
+    } catch (cause) {
+      fileWatchError.value = cause instanceof Error ? cause.message : String(cause)
+    }
+  }
+
+  async function startDocumentWatcher() {
+    if (!isTauri()) return
+    try {
+      unlistenDocumentChanges = await listen<string>('document-file-changed', (event) => {
+        void handleDocumentFileChange(event.payload)
+      })
+      watcherStarted = true
+      await syncDocumentWatcher()
+    } catch (cause) {
+      fileWatchError.value = cause instanceof Error ? cause.message : String(cause)
+    }
   }
 
   async function loadPath(path: string, mode: EditorMode = 'source') {
@@ -124,7 +185,9 @@ export function useWorkspace() {
 
   function closeDocument(id: string) {
     const index = documents.value.findIndex((document) => document.id === id)
+    const document = documents.value[index]
     documents.value = closeWorkspaceDocument(documents.value, id)
+    if (document) clearExternalChange(document.path)
     if (activeDocumentId.value === id) {
       activeDocumentId.value = documents.value[index - 1]?.id ?? documents.value[index]?.id ?? null
     }
@@ -183,6 +246,29 @@ export function useWorkspace() {
     }
   }
 
+  async function reloadExternalChange(path: string) {
+    if (processingExternalPaths.has(path)) return
+    const existing = documents.value.find((document) => document.path === path)
+    if (!existing) return
+
+    processingExternalPaths.add(path)
+    isLoading.value = true
+    error.value = null
+    try {
+      const loaded = await invoke<LoadedDocument>('read_document', { path })
+      documents.value = documents.value.map((document) =>
+        document.path === path ? reloadWorkspaceDocument(document, loaded) : document,
+      )
+      clearExternalChange(path)
+      persistSession()
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : String(cause)
+    } finally {
+      isLoading.value = false
+      processingExternalPaths.delete(path)
+    }
+  }
+
   async function restoreSession() {
     const session = readSession()
     if (!session) return
@@ -205,6 +291,10 @@ export function useWorkspace() {
 
   watch([documents, activeDocumentId, navigatorCollapsed, theme], persistSession, { deep: false })
   watch(
+    () => documents.value.map((document) => document.path).join('\u0000'),
+    () => { void syncDocumentWatcher() },
+  )
+  watch(
     () => activeDocument.value?.path,
     (path) => {
       if (path) {
@@ -218,25 +308,32 @@ export function useWorkspace() {
     { immediate: true },
   )
   onMounted(() => {
-    void restoreSession()
     window.addEventListener('keydown', handleSaveShortcut)
+    void restoreSession().finally(() => { void startDocumentWatcher() })
   })
-  onBeforeUnmount(() => window.removeEventListener('keydown', handleSaveShortcut))
+  onBeforeUnmount(() => {
+    window.removeEventListener('keydown', handleSaveShortcut)
+    unlistenDocumentChanges?.()
+    if (watcherStarted && isTauri()) void invoke('watch_documents', { paths: [] })
+  })
 
   return {
     activeDocument,
+    activeExternalChange,
     browseDirectory,
     closeDocument,
     directoryError,
     directoryListing,
     documents,
     error,
+    fileWatchError,
     hasUnsavedChanges,
     isLoading,
     navigatorCollapsed,
     openPath: loadPath,
     openDocument,
     recordEditorInitialization,
+    reloadExternalChange,
     saveActiveDocument,
     selectDocument,
     setMode,
@@ -244,5 +341,6 @@ export function useWorkspace() {
     setTheme,
     theme,
     updateActiveDocument,
+    clearExternalChange,
   }
 }

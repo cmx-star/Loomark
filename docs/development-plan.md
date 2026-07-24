@@ -62,7 +62,7 @@ Cloud providers are first. Provider adapters use a redacted settings store and s
 | --- | --- | --- |
 | WebView/editor memory pressure on large source | Size classification, bounded first chunk, delayed full source allocation | In scope |
 | Markdown mode conversion creates unwanted Git diffs | Source bytes are canonical; no AST reserialization on save | In scope |
-| File changes outside the app race with edits | Later file watcher requires explicit reload/keep/diff decision | Designed, not implemented |
+| File changes outside the app race with edits | Watch only opened documents; compare content after an external save and require an explicit reload or keep decision only when it differs | Implemented; native-window verification remains |
 | Pandoc licensing, binary size, and platform compatibility | Pin a tested sidecar per platform and expose diagnostics | Contract only |
 | Plugin arbitrary code compromises local files | Declarative first; permissioned isolation before execution | Designed, not implemented |
 | AI leaks content or cost surprises | Explicit provider, context selection, redaction, token bounds | Designed, not implemented |
@@ -85,7 +85,7 @@ This slice makes the application usable as a local Markdown editor: multiple tab
 
 Unchanged documents never invoke the save command, preserving the M0 no-edit byte-preservation rule. Changed documents are saved only through an explicit Save action or Cmd/Ctrl+S.
 
-Remaining M1 work is external-file watcher/reload conflict UI. Git, exports, plugins, and AI remain later milestones.
+Opened documents are watched through the platform file-event backend. After an external save, Loomark reads and compares the disk content with its in-memory buffer. A matching save is ignored. A difference creates a non-destructive prompt regardless of document size or local dirty state: reload replaces the in-memory document only after the user chooses it, while keep leaves the current buffer intact until a later explicit save. Git, exports, plugins, and AI remain later milestones.
 
 ## Internationalization Baseline (2026-07-24)
 
@@ -126,5 +126,5 @@ Internationalization is a cross-cutting requirement for the shell: `zh-CN` remai
 
 ### M1 Validation Evidence
 
-- Passed: TypeScript check, Vitest (9 tests), Vite production build, `cargo check`, and Rust unit tests.
-- Limited: browser preview could not connect through the browser runtime's localhost URL policy. Native file-dialog, save, session restore, and print interactions still need a user-visible Tauri window check.
+- Passed: TypeScript check, Vitest (17 tests), Vite production build, `cargo check`, and Rust unit tests.
+- Still required: a user-visible Tauri window check that changes an opened file externally, verifies reload and keep outcomes, and exercises native file dialog, save, session restore, and print interactions.
