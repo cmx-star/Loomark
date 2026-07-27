@@ -134,6 +134,6 @@ Internationalization is a cross-cutting requirement for the shell: `zh-CN` remai
 
 Electron 41.7.1 is pinned because it is the final Electron 41 patch compatible with Node 20.19.4. The host uses `contextIsolation`, sandboxing, and disabled `nodeIntegration`; the renderer receives only a typed, allowlisted preload bridge for Markdown dialogs, bounded document I/O, one-level directory listing, non-recursive document watching, diagnostic logs, and native-menu state/actions.
 
-The active scripts are `pnpm electron:dev`, `pnpm electron:package`, and `pnpm electron:make`. GitHub Actions builds unsigned macOS arm64/x64, Linux x64, and Windows x64 artifacts and attaches them to a draft release. No signing or notarization is configured.
+The active scripts are `pnpm electron:dev`, `pnpm electron:package`, and `pnpm electron:make`. GitHub Actions builds unsigned macOS arm64, Linux x64, and Windows x64 artifacts and attaches them to a draft release. No signing or notarization is configured.
 
 Migration verification passed for Vue/Electron type checks, 22 behavior tests, renderer production build, Forge's main/preload/renderer bundle stage, and a local Electron window launch. Native file-dialog, watcher, log-directory, print-dialog, and final installer verification remain required before a production release.
