@@ -10,6 +10,8 @@ The product roadmap is in `large-markdown-editor-technical-solution-and-roadmap.
 - CLI entry point for local inspection.
 - No Qt, MD4C, or Scintilla dependency is linked yet.
 - No WebView or HTML preview path.
+- Byte-range locate and literal search are available in the CLI prototype.
+- Search and locate report 1-based byte columns; a UTF-8 BOM at file start is treated as zero-width.
 
 ## Build after CMake is installed
 
@@ -35,5 +37,7 @@ clang++ -std=c++20 -Wall -Wextra -Wpedantic -Isrc \
 ```bash
 ./build/macos-debug/markdown_qt_p0 inspect path/to/file.md
 ./build/macos-debug/markdown_qt_p0 index path/to/file.md 200
+./build/macos-debug/markdown_qt_p0 search path/to/file.md needle 50
+./build/macos-debug/markdown_qt_p0 locate path/to/file.md 120 180
 ./build/macos-debug/markdown_qt_p0 chunk path/to/file.md 0 4096
 ```

@@ -14,6 +14,8 @@ void printUsage()
         << "Usage:\n"
         << "  markdown_qt_p0 inspect <file>\n"
         << "  markdown_qt_p0 index <file> [max-blocks]\n"
+        << "  markdown_qt_p0 search <file> <needle> [max-results]\n"
+        << "  markdown_qt_p0 locate <file> <start> <end>\n"
         << "  markdown_qt_p0 chunk <file> <start> <end>\n";
 }
 
@@ -72,6 +74,46 @@ int main(int argc, char** argv)
                 }
                 std::cout << "\n";
             }
+            return EXIT_SUCCESS;
+        }
+
+        if (command == "search") {
+            if (argc < 4) {
+                printUsage();
+                return EXIT_FAILURE;
+            }
+            mqt::core::SearchOptions options;
+            if (argc >= 5) {
+                options.maxResults = static_cast<std::size_t>(parseU64(argv[4]));
+            }
+            const auto result = mqt::core::searchLiteral(path, argv[3], options);
+            std::cout
+                << "matches=" << result.hits.size() << "\n"
+                << "bytes_scanned=" << result.bytesScanned << "\n"
+                << "truncated=" << (result.truncated ? "true" : "false") << "\n";
+            for (const auto& hit : result.hits) {
+                std::cout
+                    << hit.position.line << "\t"
+                    << hit.position.column << "\t"
+                    << hit.sourceRange.start << "\t"
+                    << hit.sourceRange.end << "\n";
+            }
+            return EXIT_SUCCESS;
+        }
+
+        if (command == "locate") {
+            if (argc < 5) {
+                printUsage();
+                return EXIT_FAILURE;
+            }
+            const auto start = parseU64(argv[3]);
+            const auto end = parseU64(argv[4]);
+            const auto result = mqt::core::locateByteRange(path, {start, end});
+            std::cout
+                << "start_line=" << result.start.line << "\n"
+                << "start_column=" << result.start.column << "\n"
+                << "end_line=" << result.end.line << "\n"
+                << "end_column=" << result.end.column << "\n";
             return EXIT_SUCCESS;
         }
 

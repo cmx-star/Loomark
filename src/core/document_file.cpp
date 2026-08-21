@@ -2,10 +2,13 @@
 
 #include <array>
 #include <chrono>
+#include <deque>
 #include <fstream>
 #include <limits>
+#include <numeric>
 #include <sstream>
 #include <stdexcept>
+#include <vector>
 
 namespace mqt::core {
 namespace {
@@ -40,6 +43,65 @@ std::filesystem::path makeTempPath(const std::filesystem::path& path)
     std::ostringstream name;
     name << "." << path.filename().string() << ".tmp." << stamp;
     return path.parent_path() / name.str();
+}
+
+struct Cursor {
+    std::uint64_t offset = 0;
+    std::uint64_t line = 1;
+    std::uint64_t column = 1;
+};
+
+struct CursorSample {
+    std::uint64_t offset = 0;
+    TextPosition position {};
+};
+
+std::vector<std::size_t> buildPrefixTable(std::string_view needle)
+{
+    std::vector<std::size_t> prefix(needle.size(), 0);
+    std::size_t matched = 0;
+    for (std::size_t i = 1; i < needle.size(); ++i) {
+        while (matched > 0 && needle[i] != needle[matched]) {
+            matched = prefix[matched - 1];
+        }
+        if (needle[i] == needle[matched]) {
+            ++matched;
+        }
+        prefix[i] = matched;
+    }
+    return prefix;
+}
+
+bool hasUtf8Bom(std::ifstream& input)
+{
+    std::array<char, 3> prefix {};
+    input.read(prefix.data(), static_cast<std::streamsize>(prefix.size()));
+    if (input.gcount() == static_cast<std::streamsize>(prefix.size()) &&
+        static_cast<unsigned char>(prefix[0]) == 0xEF &&
+        static_cast<unsigned char>(prefix[1]) == 0xBB &&
+        static_cast<unsigned char>(prefix[2]) == 0xBF) {
+        input.clear();
+        input.seekg(0, std::ios::beg);
+        return true;
+    }
+
+    input.clear();
+    input.seekg(0, std::ios::beg);
+    return false;
+}
+
+void advanceCursor(Cursor& cursor, unsigned char ch, bool zeroWidth)
+{
+    ++cursor.offset;
+    if (zeroWidth) {
+        return;
+    }
+    if (ch == '\n') {
+        ++cursor.line;
+        cursor.column = 1;
+    } else {
+        ++cursor.column;
+    }
 }
 
 } // namespace
@@ -153,6 +215,137 @@ std::string readRange(const std::filesystem::path& path, ByteRange range)
         }
     }
     return data;
+}
+
+SearchResult searchLiteral(const std::filesystem::path& path, std::string_view needle, const SearchOptions& options)
+{
+    if (needle.empty()) {
+        throw std::invalid_argument("search needle cannot be empty");
+    }
+    if (options.chunkSize == 0 || options.maxResults == 0) {
+        throw std::invalid_argument("search options must be non-zero");
+    }
+
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        throw std::runtime_error("failed to open file: " + path.string());
+    }
+
+    SearchResult result;
+    const auto prefix = buildPrefixTable(needle);
+    std::vector<char> buffer(options.chunkSize);
+    std::size_t matched = 0;
+    Cursor cursor;
+    std::deque<CursorSample> samples;
+    const bool zeroWidthBom = hasUtf8Bom(input);
+    samples.push_back({0, {1, 1}});
+
+    while (input && !result.truncated) {
+        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const auto read = input.gcount();
+        if (read <= 0) {
+            break;
+        }
+
+        for (std::streamsize i = 0; i < read; ++i) {
+            const unsigned char ch = static_cast<unsigned char>(buffer[static_cast<std::size_t>(i)]);
+            samples.push_back({cursor.offset, {cursor.line, cursor.column}});
+            bool stopAfterCurrentByte = false;
+
+            while (matched > 0 && ch != static_cast<unsigned char>(needle[matched])) {
+                matched = prefix[matched - 1];
+            }
+            if (ch == static_cast<unsigned char>(needle[matched])) {
+                ++matched;
+            }
+
+            const auto startLimit = cursor.offset >= needle.size() ? cursor.offset - needle.size() + 1 : 0;
+            while (!samples.empty() && samples.front().offset < startLimit) {
+                samples.pop_front();
+            }
+
+            if (matched == needle.size()) {
+                if (result.hits.size() >= options.maxResults) {
+                    result.truncated = true;
+                    stopAfterCurrentByte = true;
+                } else {
+                    if (samples.empty() || samples.front().offset != startLimit) {
+                        throw std::runtime_error("search cursor alignment lost");
+                    }
+                    result.hits.push_back(SearchHit{
+                        .sourceRange = {startLimit, cursor.offset + 1},
+                        .position = samples.front().position,
+                    });
+                    matched = prefix[matched - 1];
+                }
+            }
+
+            advanceCursor(cursor, ch, zeroWidthBom && cursor.offset < 3);
+            if (stopAfterCurrentByte) {
+                break;
+            }
+        }
+    }
+
+    result.bytesScanned = cursor.offset;
+    return result;
+}
+
+LocateResult locateByteRange(const std::filesystem::path& path, ByteRange range)
+{
+    const auto fileSize = std::filesystem::file_size(path);
+    if (range.end > fileSize) {
+        throw std::out_of_range("byte range exceeds file size");
+    }
+
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        throw std::runtime_error("failed to open file: " + path.string());
+    }
+
+    std::vector<char> buffer(64 * 1024);
+    Cursor cursor;
+    LocateResult result;
+    bool startCaptured = false;
+    bool endCaptured = false;
+    const bool zeroWidthBom = hasUtf8Bom(input);
+
+    while (input && (!startCaptured || !endCaptured)) {
+        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const auto read = input.gcount();
+        if (read <= 0) {
+            break;
+        }
+
+        for (std::streamsize i = 0; i < read; ++i) {
+            if (!startCaptured && cursor.offset == range.start) {
+                result.start = {cursor.line, cursor.column};
+                startCaptured = true;
+            }
+            if (!endCaptured && cursor.offset == range.end) {
+                result.end = {cursor.line, cursor.column};
+                endCaptured = true;
+                if (startCaptured) {
+                    break;
+                }
+            }
+            advanceCursor(cursor, static_cast<unsigned char>(buffer[static_cast<std::size_t>(i)]), zeroWidthBom && cursor.offset < 3);
+        }
+    }
+
+    if (!startCaptured && cursor.offset == range.start) {
+        result.start = {cursor.line, cursor.column};
+        startCaptured = true;
+    }
+    if (!endCaptured && cursor.offset == range.end) {
+        result.end = {cursor.line, cursor.column};
+        endCaptured = true;
+    }
+
+    if (!startCaptured || !endCaptured) {
+        throw std::runtime_error("failed to locate byte range positions");
+    }
+    return result;
 }
 
 void writeFileAtomically(const std::filesystem::path& path, std::string_view content)

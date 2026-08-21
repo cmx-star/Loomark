@@ -27,9 +27,9 @@ std::filesystem::path testRoot()
     return root;
 }
 
-void writeText(const std::filesystem::path& path, std::string_view text)
+void writeText(const std::filesystem::path& path, std::string_view text, std::ios::openmode mode = std::ios::binary | std::ios::trunc)
 {
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    std::ofstream output(path, mode);
     output << text;
 }
 
@@ -62,6 +62,39 @@ void testAtomicWrite(const std::filesystem::path& root)
     require(mqt::core::readRange(path, {0, 5}) == "first", "atomic write should create content");
     mqt::core::writeFileAtomically(path, "second");
     require(mqt::core::readRange(path, {0, 6}) == "second", "atomic write should replace content");
+}
+
+void testSearchLiteral(const std::filesystem::path& root)
+{
+    const auto path = root / "search.md";
+    writeText(path,
+        "alpha beta\n"
+        "needle in the middle\n"
+        "end of needle\n"
+        "chunk-boundary-");
+    writeText(path, "\x20needle\n", std::ios::binary | std::ios::app);
+
+    mqt::core::SearchOptions options;
+    options.chunkSize = 8;
+    options.maxResults = 10;
+    const auto result = mqt::core::searchLiteral(path, "needle", options);
+    require(result.hits.size() == 3, "search should find all literal matches");
+    require(result.hits[0].position.line == 2, "first match should be on line 2");
+    require(result.hits[0].position.column == 1, "first match should start at column 1");
+    require(result.hits[1].position.line == 3, "second match should be on line 3");
+    require(result.hits[2].position.line == 4, "third match should cross chunk boundary and be found");
+    require(result.hits[2].sourceRange.end > result.hits[2].sourceRange.start, "search result should expose byte range");
+}
+
+void testLocateByteRange(const std::filesystem::path& root)
+{
+    const auto path = root / "locate.md";
+    writeText(path, "\xEF\xBB\xBF# Title\r\nbody\nlast");
+    const auto result = mqt::core::locateByteRange(path, {3, 10});
+    require(result.start.line == 1, "range start should be on first line");
+    require(result.start.column == 1, "range start should begin after BOM");
+    require(result.end.line == 1, "range end should stay on first line");
+    require(result.end.column == 8, "range end should end after the title bytes");
 }
 
 void testPreviewIndex(const std::filesystem::path& root)
@@ -109,6 +142,8 @@ int main()
         testFileTierBoundaries();
         testInspectAndReadRange(root);
         testAtomicWrite(root);
+        testSearchLiteral(root);
+        testLocateByteRange(root);
         testPreviewIndex(root);
         testPreviewTruncation(root);
         std::filesystem::remove_all(root);
