@@ -1,1 +1,12 @@
 large-markdown-editor-technical-solution-and-roadmap.md
+
+# Build output
+build/
+cmake-build-*/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Generated local performance samples
+samples/generated/
