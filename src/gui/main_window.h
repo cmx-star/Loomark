@@ -16,7 +16,7 @@ namespace mqt::gui {
 
 class MainWindow final : public QMainWindow {
 public:
-    explicit MainWindow(QWidget* parent = nullptr);
+    explicit MainWindow(const std::filesystem::path& initialPath = {}, QWidget* parent = nullptr);
 
 protected:
     void closeEvent(QCloseEvent* event) override;

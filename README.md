@@ -10,17 +10,29 @@ The product roadmap is in `large-markdown-editor-technical-solution-and-roadmap.
 - CLI entry point for local inspection.
 - Qt Widgets desktop GUI entry point.
 - PyQtDarkTheme-derived dark Qt stylesheet is embedded as a Qt resource for cross-platform widget styling.
-- No WebView or HTML preview path.
+- Native Markdown preview parses with `md4qt` and renders directly into `QTextDocument`; it does not use WebView or an HTML preview path.
 - Byte-range locate and literal search are available in the CLI prototype.
 - Search and locate report 1-based byte columns; a UTF-8 BOM at file start is treated as zero-width.
+
+## Markdown preview
+
+- Parser: KDE `md4qt` 5.1.3, pinned to commit `1a878810adeeb534de4de395f4951edd54ab6072` under the MIT license; macOS bundles copy the license to `Contents/Resources/licenses/md4qt-MIT.txt`.
+- Renderer: project-owned AST-to-`QTextDocument` rendering for headings, inline styles, code, quotes, lists, links, images, tables, and thematic breaks.
+- Safety: raw HTML is displayed as text, remote images are not downloaded, and unsafe link schemes are not made clickable.
+- Large documents retain the existing windowed preview path instead of parsing the full editor buffer on every refresh.
+- Math expressions use MathJax 4.1.3 to convert TeX to SVG, then QtSvg rasterizes the SVG into `QTextDocument` image resources. If Node.js, the helper script, or MathJax is unavailable, formulas fall back to visible styled source.
+- Mermaid diagram rendering is deferred. WebEngine, Marked.js, and QWebChannel are not part of the current preview path.
+
+`md4qt` is acquired with CMake `FetchContent`. The first configure needs network access to the official KDE repository; subsequent builds can reuse the populated `build/<preset>/_deps` cache. MathJax is acquired with npm and bundled into the macOS app resources for formula preview; the helper currently requires a local Node.js runtime.
 
 ## Build after CMake is installed
 
 ```bash
+npm install
 cmake --preset macos-debug
 cmake --build --preset macos-debug
 ctest --preset macos-debug
-open ./build/macos-debug/markdown_qt_gui.app
+open ./build/macos-debug/Loomark.app
 ```
 
 ## Temporary verification without CMake

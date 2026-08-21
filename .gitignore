@@ -3,6 +3,7 @@ large-markdown-editor-technical-solution-and-roadmap.md
 # Build output
 build/
 cmake-build-*/
+node_modules/
 
 # Python cache
 __pycache__/
@@ -10,3 +11,4 @@ __pycache__/
 
 # Generated local performance samples
 samples/generated/
+node_modules/

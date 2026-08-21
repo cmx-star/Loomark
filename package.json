@@ -1,0 +1,10 @@
+{
+  "name": "markdown-qt",
+  "private": true,
+  "scripts": {
+    "verify:mathjax": "printf '{\"tex\":\"x^2 + y^2\",\"display\":false}' | node tools/mathjax_svg.mjs"
+  },
+  "dependencies": {
+    "mathjax": "4.1.3"
+  }
+}

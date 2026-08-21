@@ -1,5 +1,7 @@
 #include "gui/main_window.h"
 
+#include "gui/markdown_document_renderer.h"
+
 #include "core/file_tier.h"
 #include "core/markdown_index.h"
 
@@ -122,7 +124,7 @@ std::string normalizeLineEndings(std::string text, mqt::core::NewlineStyle style
 
 QString makeTitle(const std::filesystem::path& path, bool dirty)
 {
-    QString title = QStringLiteral("Markdown Qt");
+    QString title = QStringLiteral("Loomark");
     if (!path.empty()) {
         title += QStringLiteral(" - ");
         title += toQString(path.filename());
@@ -169,28 +171,6 @@ QFont editorFont()
     font.setPointSize(13);
     font.setStyleHint(QFont::Monospace);
     return font;
-}
-
-QString markdownStyleSheet()
-{
-    return QStringLiteral(
-        "body { color: #e8eaed; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif; }"
-        "h1 { font-size: 30px; margin: 0 0 18px 0; font-weight: 700; color: #ffffff; }"
-        "h2 { font-size: 24px; margin: 26px 0 14px 0; font-weight: 700; color: #f5f7fa; }"
-        "h3 { font-size: 19px; margin: 22px 0 12px 0; font-weight: 700; color: #f5f7fa; }"
-        "h4 { font-size: 16px; margin: 18px 0 10px 0; font-weight: 700; color: #f5f7fa; }"
-        "p { margin: 0 0 14px 0; line-height: 150%; }"
-        "ul, ol { margin-top: 6px; margin-bottom: 16px; padding-left: 22px; }"
-        "li { margin-bottom: 7px; }"
-        "blockquote { color: #c6cbd3; border-left: 4px solid #009688; margin: 16px 0; padding: 4px 0 4px 14px; background: #202428; }"
-        "pre { background: #15171a; border: 1px solid #34383f; border-radius: 8px; padding: 14px; margin: 16px 0; }"
-        "code { font-family: 'SF Mono', Menlo, Monaco, Consolas, monospace; color: #f1f3f4; background: #24272c; }"
-        "pre code { background: transparent; }"
-        "table { border-collapse: collapse; margin: 16px 0; }"
-        "th, td { border: 1px solid #3b4048; padding: 8px 12px; }"
-        "th { background: #24282e; color: #ffffff; font-weight: 700; }"
-        "hr { color: #34383f; background-color: #34383f; height: 1px; border: none; margin: 20px 0; }"
-        "a { color: #80cbc4; }");
 }
 
 bool isFenceLine(QStringView line)
@@ -246,7 +226,7 @@ QWidget* makePanel(const QString& title, QLabel*& metaLabel, QWidget* body, QWid
 
 } // namespace
 
-MainWindow::MainWindow(QWidget* parent)
+MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent)
     : QMainWindow(parent)
 {
     setMinimumSize(980, 680);
@@ -269,7 +249,6 @@ MainWindow::MainWindow(QWidget* parent)
     preview_->setLineWrapMode(QTextEdit::WidgetWidth);
     preview_->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
     preview_->document()->setDocumentMargin(22);
-    preview_->document()->setDefaultStyleSheet(markdownStyleSheet());
 
     splitter->addWidget(makePanel(QStringLiteral("源码"), editorMetaLabel_, editor_, splitter));
     splitter->addWidget(makePanel(QStringLiteral("预览"), previewMetaLabel_, preview_, splitter));
@@ -351,8 +330,11 @@ MainWindow::MainWindow(QWidget* parent)
     reloadAction_->setEnabled(false);
     updateWindowState();
     updateStatusBar();
-    preview_->setMarkdown(QStringLiteral(""));
+    preview_->clear();
     status->showMessage(QStringLiteral("就绪"));
+    if (!initialPath.empty()) {
+        loadDocument(initialPath);
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
@@ -487,11 +469,21 @@ void MainWindow::refreshPreview()
 {
     updatePreviewLayout();
     const QString previewText = collectPreviewText();
-    preview_->document()->setDefaultStyleSheet(markdownStyleSheet());
-    preview_->setMarkdown(previewText);
+    QUrl baseUrl;
+    if (!currentPath_.empty()) {
+        QString basePath = toQString(currentPath_.parent_path());
+        if (!basePath.endsWith(QLatin1Char('/'))) {
+            basePath += QLatin1Char('/');
+        }
+        baseUrl = QUrl::fromLocalFile(basePath);
+    }
+    const auto renderResult = renderMarkdownDocument(*preview_->document(), previewText, baseUrl);
+    updatePreviewLayout();
 
     const int characterCount = std::max(0, editor_->document()->characterCount() - 1);
-    if (characterCount > kFullPreviewCharLimit) {
+    if (!renderResult.success) {
+        previewMetaLabel_->setText(QStringLiteral("预览失败 · %1").arg(renderResult.errorMessage.left(72)));
+    } else if (characterCount > kFullPreviewCharLimit) {
         preview_->verticalScrollBar()->setValue(0);
         previewMetaLabel_->setText(QStringLiteral("大型文件 · 第 %1-%2 行 / 共 %3 行")
             .arg(previewStartLine_)

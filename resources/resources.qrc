@@ -52,4 +52,7 @@
     <file alias="dist/dark/svg/vertical_line__icon-foreground-disabled__rotate-0.svg">themes/pyqtdarktheme/dist/dark/svg/vertical_line__icon-foreground-disabled__rotate-0.svg</file>
     <file alias="dist/dark/svg/vertical_line__icon-foreground__rotate-0.svg">themes/pyqtdarktheme/dist/dark/svg/vertical_line__icon-foreground__rotate-0.svg</file>
   </qresource>
+  <qresource prefix="/brand">
+    <file alias="loomark.svg">brand/loomark.svg</file>
+  </qresource>
 </RCC>

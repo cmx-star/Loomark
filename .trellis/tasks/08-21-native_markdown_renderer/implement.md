@@ -7,6 +7,9 @@
 - `src/gui/markdown_document_renderer.cpp`
 - `src/gui/main_window.h`
 - `src/gui/main_window.cpp`
+- `tools/mathjax_svg.mjs`
+- `package.json`
+- `package-lock.json`
 - `tests/markdown_document_renderer_tests.cpp`
 - `README.md`
 - 当前 Task 的需求、设计、计划和进度文件。
@@ -15,7 +18,7 @@
 
 ## 不变量
 
-- 不引入 WebEngine、JavaScript、Scintilla/QScintilla 或公式渲染依赖。
+- 不引入 WebEngine、Scintilla/QScintilla；用户已批准 MathJax/Node helper 仅用于公式 SVG 转换。
 - 不修改文件格式、原子保存语义和 CLI 行为。
 - 不回退现有未提交 GUI、主题、CMake preset 和 Trellis 改动。
 - 不执行提交、分支切换、推送或发布。
@@ -26,12 +29,13 @@
 2. 实现 AST 到 `QTextDocument` 的原生块级与行内渲染。
 3. 将 `MainWindow::refreshPreview()` 切换到新渲染器，保持窗口化和滚动行为。
 4. 增加渲染器测试，覆盖常用语法、安全降级和结构输出。
-5. 更新 README，记录架构、依赖、首次联网要求以及 Mermaid 后续项。
+5. 更新 README，记录架构、依赖、首次联网/npm 安装要求以及 Mermaid 后续项。
 6. 执行构建、测试、GUI 启动与针对性代码审查。
 
 ## 验证命令
 
 ```bash
+npm install
 cmake --preset macos-debug
 cmake --build --preset macos-debug
 ctest --preset macos-debug
