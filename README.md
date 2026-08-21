@@ -1,6 +1,6 @@
 # markdown-qt
 
-P0 prototype for a native large-file Markdown editor. The current repository starts with the macOS-first core path: classify large files, inspect basic file metadata, read byte ranges, build a lightweight streaming preview index, and replace files through a sibling temporary file.
+P0 prototype for a native large-file Markdown editor. The current repository now includes a cross-platform基础 GUI首版: open a local Markdown file, edit it, preview it in the same window, and save it back through the core atomic write path. The first build and verification environment is macOS.
 
 The product roadmap is in `large-markdown-editor-technical-solution-and-roadmap.md`, which is kept outside Git by project `.gitignore` until the plan is explicitly promoted into tracked documentation.
 
@@ -8,7 +8,8 @@ The product roadmap is in `large-markdown-editor-technical-solution-and-roadmap.
 
 - Standard C++20 core library.
 - CLI entry point for local inspection.
-- No Qt, MD4C, or Scintilla dependency is linked yet.
+- Qt Widgets desktop GUI entry point.
+- PyQtDarkTheme-derived dark Qt stylesheet is embedded as a Qt resource for cross-platform widget styling.
 - No WebView or HTML preview path.
 - Byte-range locate and literal search are available in the CLI prototype.
 - Search and locate report 1-based byte columns; a UTF-8 BOM at file start is treated as zero-width.
@@ -19,6 +20,7 @@ The product roadmap is in `large-markdown-editor-technical-solution-and-roadmap.
 cmake --preset macos-debug
 cmake --build --preset macos-debug
 ctest --preset macos-debug
+open ./build/macos-debug/markdown_qt_gui.app
 ```
 
 ## Temporary verification without CMake
