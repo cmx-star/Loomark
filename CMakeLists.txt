@@ -28,6 +28,11 @@ FetchContent_Declare(md4qt
 
 FetchContent_MakeAvailable(md4qt)
 
+target_include_directories(md4qt
+    BEFORE PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/qt-compat"
+)
+
 # md4qt targets C++17 internally. Restore this project's standard for targets below.
 set(CMAKE_CXX_STANDARD 20)
 
@@ -71,6 +76,9 @@ set(MATHJAX_RUNTIME_FONT_FILES
     "${MATHJAX_NODE_MODULES}/@mathjax/mathjax-newcm-font/package.json"
     "${MATHJAX_NODE_MODULES}/@mathjax/mathjax-newcm-font/svg.js"
 )
+set(MATHJAX_RUNTIME_FONT_SVG_DYNAMIC_DIR "${MATHJAX_NODE_MODULES}/@mathjax/mathjax-newcm-font/svg/dynamic")
+set(MATHJAX_TEST_RUNTIME_DIR "${CMAKE_CURRENT_BINARY_DIR}/mathjax-runtime")
+set(MATHJAX_TEST_RUNTIME_STAMP "${MATHJAX_TEST_RUNTIME_DIR}/.stamp")
 
 add_executable(markdown_qt_p0
     src/cli/main.cpp
@@ -170,6 +178,9 @@ if(APPLE)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${MATHJAX_RUNTIME_FONT_FILES}
                 "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules/@mathjax/mathjax-newcm-font"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${MATHJAX_RUNTIME_FONT_SVG_DYNAMIC_DIR}"
+                "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules/@mathjax/mathjax-newcm-font/svg/dynamic"
             VERBATIM
         )
     endif()
@@ -197,6 +208,9 @@ if(NOT APPLE)
         )
         install(FILES ${MATHJAX_RUNTIME_FONT_FILES}
             DESTINATION ${CMAKE_INSTALL_BINDIR}/node_modules/@mathjax/mathjax-newcm-font
+        )
+        install(DIRECTORY "${MATHJAX_RUNTIME_FONT_SVG_DYNAMIC_DIR}/"
+            DESTINATION ${CMAKE_INSTALL_BINDIR}/node_modules/@mathjax/mathjax-newcm-font/svg/dynamic
         )
     endif()
 endif()
@@ -241,8 +255,50 @@ if(MQT_NODE_EXECUTABLE)
     )
 endif()
 
+add_custom_command(
+    OUTPUT "${MATHJAX_TEST_RUNTIME_STAMP}"
+    COMMAND ${CMAKE_COMMAND} -E remove_directory
+        "${MATHJAX_TEST_RUNTIME_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "${MATHJAX_TEST_RUNTIME_DIR}/node_modules/mathjax"
+        "${MATHJAX_TEST_RUNTIME_DIR}/node_modules/@mathjax/mathjax-newcm-font"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${MATHJAX_SCRIPT}"
+        "${MATHJAX_TEST_RUNTIME_DIR}/mathjax_svg.mjs"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${MATHJAX_RUNTIME_MATHJAX_FILES}
+        "${MATHJAX_TEST_RUNTIME_DIR}/node_modules/mathjax"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${MATHJAX_RUNTIME_INPUT_DIR}"
+        "${MATHJAX_TEST_RUNTIME_DIR}/node_modules/mathjax/input"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${MATHJAX_RUNTIME_OUTPUT_DIR}"
+        "${MATHJAX_TEST_RUNTIME_DIR}/node_modules/mathjax/output"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${MATHJAX_RUNTIME_ADAPTORS_DIR}"
+        "${MATHJAX_TEST_RUNTIME_DIR}/node_modules/mathjax/adaptors"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${MATHJAX_RUNTIME_FONT_FILES}
+        "${MATHJAX_TEST_RUNTIME_DIR}/node_modules/@mathjax/mathjax-newcm-font"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${MATHJAX_RUNTIME_FONT_SVG_DYNAMIC_DIR}"
+        "${MATHJAX_TEST_RUNTIME_DIR}/node_modules/@mathjax/mathjax-newcm-font/svg/dynamic"
+    COMMAND ${CMAKE_COMMAND} -E touch
+        "${MATHJAX_TEST_RUNTIME_STAMP}"
+    DEPENDS
+        "${MATHJAX_SCRIPT}"
+        ${MATHJAX_RUNTIME_MATHJAX_FILES}
+        ${MATHJAX_RUNTIME_FONT_FILES}
+        "${MATHJAX_RUNTIME_FONT_SVG_DYNAMIC_DIR}"
+    VERBATIM
+)
+add_custom_target(markdown_renderer_test_mathjax_runtime
+    DEPENDS "${MATHJAX_TEST_RUNTIME_STAMP}"
+)
+add_dependencies(markdown_qt_markdown_renderer_tests markdown_renderer_test_mathjax_runtime)
+
 add_test(NAME markdown_qt_markdown_renderer_tests COMMAND markdown_qt_markdown_renderer_tests)
-set(MARKDOWN_RENDERER_TEST_ENV "MQT_MATHJAX_SCRIPT=${MATHJAX_SCRIPT}")
+set(MARKDOWN_RENDERER_TEST_ENV "MQT_MATHJAX_SCRIPT=${MATHJAX_TEST_RUNTIME_DIR}/mathjax_svg.mjs")
 if(MQT_NODE_EXECUTABLE)
     list(APPEND MARKDOWN_RENDERER_TEST_ENV "MQT_NODE=${MQT_NODE_EXECUTABLE}")
 endif()
