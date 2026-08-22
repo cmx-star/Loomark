@@ -242,8 +242,12 @@ if(MQT_NODE_EXECUTABLE)
 endif()
 
 add_test(NAME markdown_qt_markdown_renderer_tests COMMAND markdown_qt_markdown_renderer_tests)
+set(MARKDOWN_RENDERER_TEST_ENV "MQT_MATHJAX_SCRIPT=${MATHJAX_SCRIPT}")
+if(MQT_NODE_EXECUTABLE)
+    list(APPEND MARKDOWN_RENDERER_TEST_ENV "MQT_NODE=${MQT_NODE_EXECUTABLE}")
+endif()
 set_tests_properties(markdown_qt_markdown_renderer_tests
     PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        ENVIRONMENT "MQT_MATHJAX_SCRIPT=${MATHJAX_SCRIPT}"
+        ENVIRONMENT "${MARKDOWN_RENDERER_TEST_ENV}"
 )
