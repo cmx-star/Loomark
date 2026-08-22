@@ -203,8 +203,10 @@ jobs:
             done
           }
 
+          set +e
           publish_release 2>&1 | tee release.log
           release_status=${PIPESTATUS[0]}
+          set -e
           if [ "$release_status" -ne 0 ]; then
             tail -80 release.log | while IFS= read -r line; do
               line="${line//'%'/'%25'}"
