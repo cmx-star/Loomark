@@ -202,6 +202,13 @@ QString nodeExecutablePath()
         return pathNode;
     }
 
+#ifdef Q_OS_WIN
+    const QString pathNodeExe = QStandardPaths::findExecutable(QStringLiteral("node.exe"));
+    if (!pathNodeExe.isEmpty()) {
+        return pathNodeExe;
+    }
+#endif
+
 #ifdef MQT_CONFIGURED_NODE_EXECUTABLE
     const QString buildConfiguredNode = QString::fromUtf8(MQT_CONFIGURED_NODE_EXECUTABLE);
     if (!buildConfiguredNode.isEmpty() && QFileInfo::exists(buildConfiguredNode)) {
@@ -210,9 +217,14 @@ QString nodeExecutablePath()
 #endif
 
     const QStringList candidates {
+#ifdef Q_OS_WIN
+        QStringLiteral("C:/Program Files/nodejs/node.exe"),
+        QStringLiteral("C:/Program Files (x86)/nodejs/node.exe"),
+#else
         QStringLiteral("/opt/homebrew/bin/node"),
         QStringLiteral("/usr/local/bin/node"),
         QStringLiteral("/usr/bin/node"),
+#endif
     };
     for (const QString& candidate : candidates) {
         if (QFileInfo::exists(candidate)) {

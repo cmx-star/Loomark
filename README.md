@@ -23,7 +23,7 @@ The product roadmap is in `large-markdown-editor-technical-solution-and-roadmap.
 - Math expressions use MathJax 4.1.3 to convert TeX to SVG, then QtSvg rasterizes the SVG into `QTextDocument` image resources. If Node.js, the helper script, or MathJax is unavailable, formulas fall back to visible styled source.
 - Mermaid diagram rendering is deferred. WebEngine, Marked.js, and QWebChannel are not part of the current preview path.
 
-`md4qt` is acquired with CMake `FetchContent`. The first configure needs network access to the official KDE repository; subsequent builds can reuse the populated `build/<preset>/_deps` cache. MathJax is acquired with npm and bundled into the macOS app resources for formula preview; the helper currently requires a local Node.js runtime.
+`md4qt` is acquired with CMake `FetchContent`. The first configure needs network access to the official KDE repository; subsequent builds can reuse the populated `build/<preset>/_deps` cache. MathJax is acquired with npm; packaging copies only the trimmed Node runtime files needed for TeX-to-SVG preview. The helper currently requires a local Node.js runtime.
 
 ## Build after CMake is installed
 
@@ -33,6 +33,17 @@ cmake --preset macos-debug
 cmake --build --preset macos-debug
 ctest --preset macos-debug
 open ./build/macos-debug/Loomark.app
+```
+
+## GitHub packaging
+
+GitHub Actions now builds macOS, Linux, and Windows artifacts on push, pull request, and manual dispatch. Each run uploads a platform archive named `loomark-macos.zip`, `loomark-linux.tar.gz`, or `loomark-windows.zip`.
+
+Pushing a version tag creates or updates a GitHub Release with those three archives:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
 ## Temporary verification without CMake

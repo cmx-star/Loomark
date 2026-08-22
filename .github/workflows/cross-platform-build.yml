@@ -1,0 +1,133 @@
+name: cross-platform-build
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - v*
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            qt_arch: clang_64
+            bundle_mathjax: ON
+            archive_name: loomark-macos.zip
+          - os: ubuntu-24.04
+            qt_arch: gcc_64
+            bundle_mathjax: ON
+            archive_name: loomark-linux.tar.gz
+          - os: windows-2022
+            qt_arch: win64_msvc2022_64
+            bundle_mathjax: ON
+            archive_name: loomark-windows.zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.1
+          target: desktop
+          arch: ${{ matrix.qt_arch }}
+          modules: qtsvg
+          cache: true
+
+      - name: Setup MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}"
+          -DMQT_BUNDLE_MATHJAX_RUNTIME=${{ matrix.bundle_mathjax }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: ${{ runner.os == 'Windows' && '' || 'offscreen' }}
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          package_dir="$PWD/package"
+          cmake --install build --prefix "$package_dir"
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            ditto -c -k --sequesterRsrc --keepParent "$package_dir" "$PWD/${{ matrix.archive_name }}"
+          else
+            tar -C "$PWD" -czf "$PWD/${{ matrix.archive_name }}" package
+          fi
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $packageDir = Join-Path $PWD 'package'
+          cmake --install build --prefix $packageDir
+          Compress-Archive -Path $packageDir -DestinationPath (Join-Path $PWD '${{ matrix.archive_name }}')
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive_name }}
+          path: ${{ matrix.archive_name }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: loomark-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(dist/*)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No release artifacts found in dist/."
+            exit 1
+          fi
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          fi

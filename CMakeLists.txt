@@ -6,6 +6,8 @@ project(markdown_qt
     LANGUAGES CXX
 )
 
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -55,6 +57,21 @@ if(NOT EXISTS "${MATHJAX_NODE_MODULES}/mathjax")
 endif()
 find_program(MQT_NODE_EXECUTABLE NAMES node)
 
+set(MATHJAX_RUNTIME_MATHJAX_FILES
+    "${MATHJAX_NODE_MODULES}/mathjax/package.json"
+    "${MATHJAX_NODE_MODULES}/mathjax/LICENSE"
+    "${MATHJAX_NODE_MODULES}/mathjax/node-main.mjs"
+    "${MATHJAX_NODE_MODULES}/mathjax/node-main.js"
+    "${MATHJAX_NODE_MODULES}/mathjax/node-main-setup.cjs"
+)
+set(MATHJAX_RUNTIME_INPUT_DIR "${MATHJAX_NODE_MODULES}/mathjax/input")
+set(MATHJAX_RUNTIME_OUTPUT_DIR "${MATHJAX_NODE_MODULES}/mathjax/output")
+set(MATHJAX_RUNTIME_ADAPTORS_DIR "${MATHJAX_NODE_MODULES}/mathjax/adaptors")
+set(MATHJAX_RUNTIME_FONT_FILES
+    "${MATHJAX_NODE_MODULES}/@mathjax/mathjax-newcm-font/package.json"
+    "${MATHJAX_NODE_MODULES}/@mathjax/mathjax-newcm-font/svg.js"
+)
+
 add_executable(markdown_qt_p0
     src/cli/main.cpp
 )
@@ -66,11 +83,21 @@ target_link_libraries(markdown_qt_p0
 
 add_executable(markdown_qt_gui
     resources/resources.qrc
-    resources/brand/loomark.icns
     src/gui/main.cpp
     src/gui/markdown_document_renderer.cpp
     src/gui/main_window.cpp
 )
+
+if(APPLE)
+    target_sources(markdown_qt_gui
+        PRIVATE
+            resources/brand/loomark.icns
+    )
+    set_source_files_properties(resources/brand/loomark.icns
+        PROPERTIES
+            MACOSX_PACKAGE_LOCATION Resources
+    )
+endif()
 
 target_link_libraries(markdown_qt_gui
     PRIVATE
@@ -84,6 +111,12 @@ target_compile_options(markdown_qt_gui
     PRIVATE
         $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
 )
+if(WIN32)
+    set_target_properties(markdown_qt_gui
+        PROPERTIES
+            WIN32_EXECUTABLE TRUE
+    )
+endif()
 if(MQT_NODE_EXECUTABLE)
     target_compile_definitions(markdown_qt_gui
         PRIVATE
@@ -92,11 +125,6 @@ if(MQT_NODE_EXECUTABLE)
 endif()
 
 if(APPLE)
-    set_source_files_properties(resources/brand/loomark.icns
-        PROPERTIES
-            MACOSX_PACKAGE_LOCATION Resources
-    )
-
     set_target_properties(markdown_qt_gui
         PROPERTIES
             MACOSX_BUNDLE TRUE
@@ -124,14 +152,54 @@ if(APPLE)
     )
     if(MQT_BUNDLE_MATHJAX_RUNTIME)
         add_custom_command(TARGET markdown_qt_gui POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules/mathjax"
+                "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules/@mathjax/mathjax-newcm-font"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${MATHJAX_RUNTIME_MATHJAX_FILES}
+                "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules/mathjax"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${MATHJAX_NODE_MODULES}"
-                "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules"
+                "${MATHJAX_RUNTIME_INPUT_DIR}"
+                "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules/mathjax/input"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${MATHJAX_RUNTIME_OUTPUT_DIR}"
+                "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules/mathjax/output"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${MATHJAX_RUNTIME_ADAPTORS_DIR}"
+                "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules/mathjax/adaptors"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${MATHJAX_RUNTIME_FONT_FILES}
+                "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules/@mathjax/mathjax-newcm-font"
             VERBATIM
         )
     endif()
 endif()
 
+install(TARGETS markdown_qt_p0 markdown_qt_gui
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    BUNDLE DESTINATION .
+)
+
+if(NOT APPLE)
+    install(FILES tools/mathjax_svg.mjs DESTINATION ${CMAKE_INSTALL_BINDIR})
+    if(MQT_BUNDLE_MATHJAX_RUNTIME)
+        install(FILES ${MATHJAX_RUNTIME_MATHJAX_FILES}
+            DESTINATION ${CMAKE_INSTALL_BINDIR}/node_modules/mathjax
+        )
+        install(DIRECTORY "${MATHJAX_RUNTIME_INPUT_DIR}/"
+            DESTINATION ${CMAKE_INSTALL_BINDIR}/node_modules/mathjax/input
+        )
+        install(DIRECTORY "${MATHJAX_RUNTIME_OUTPUT_DIR}/"
+            DESTINATION ${CMAKE_INSTALL_BINDIR}/node_modules/mathjax/output
+        )
+        install(DIRECTORY "${MATHJAX_RUNTIME_ADAPTORS_DIR}/"
+            DESTINATION ${CMAKE_INSTALL_BINDIR}/node_modules/mathjax/adaptors
+        )
+        install(FILES ${MATHJAX_RUNTIME_FONT_FILES}
+            DESTINATION ${CMAKE_INSTALL_BINDIR}/node_modules/@mathjax/mathjax-newcm-font
+        )
+    endif()
+endif()
 enable_testing()
 
 add_executable(markdown_qt_core_tests

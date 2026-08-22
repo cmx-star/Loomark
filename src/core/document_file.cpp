@@ -8,7 +8,18 @@
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 namespace mqt::core {
 namespace {
@@ -40,9 +51,28 @@ NewlineStyle classifyNewlines(const NewlineCounts& counts)
 std::filesystem::path makeTempPath(const std::filesystem::path& path)
 {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    std::ostringstream name;
-    name << "." << path.filename().string() << ".tmp." << stamp;
-    return path.parent_path() / name.str();
+    std::filesystem::path tempPath = path;
+    tempPath += ".tmp.";
+    tempPath += std::to_string(stamp);
+    return tempPath;
+}
+
+void replaceFileAtomically(const std::filesystem::path& tempPath, const std::filesystem::path& path)
+{
+#ifdef _WIN32
+    if (!MoveFileExW(tempPath.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        throw std::system_error(
+            static_cast<int>(GetLastError()),
+            std::system_category(),
+            "failed to replace file atomically");
+    }
+#else
+    std::error_code ec;
+    std::filesystem::rename(tempPath, path, ec);
+    if (ec) {
+        throw std::system_error(ec, "failed to replace file atomically");
+    }
+#endif
 }
 
 struct Cursor {
@@ -367,11 +397,12 @@ void writeFileAtomically(const std::filesystem::path& path, std::string_view con
         }
     }
 
-    std::error_code ec;
-    std::filesystem::rename(tempPath, path, ec);
-    if (ec) {
-        std::filesystem::remove(tempPath);
-        throw std::runtime_error("failed to replace file atomically: " + path.string());
+    try {
+        replaceFileAtomically(tempPath, path);
+    } catch (...) {
+        std::error_code ec;
+        std::filesystem::remove(tempPath, ec);
+        throw;
     }
 }
 
