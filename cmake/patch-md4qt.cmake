@@ -34,3 +34,20 @@ foreach(md4qt_qstring_remove_last
         "${md4qt_patch_variable}.chop(1);"
     )
 endforeach()
+
+foreach(md4qt_qstring_remove_first
+        "src/link_image_parser.cpp:url"
+        "src/inline_html_parser.cpp:tag"
+        "src/inline_code_parser.cpp:code"
+        "src/inline_math_parser.cpp:code"
+        "src/paragraph_parser.cpp:url"
+        "src/utils.cpp:tag")
+    string(REPLACE ":" ";" md4qt_patch_parts "${md4qt_qstring_remove_first}")
+    list(GET md4qt_patch_parts 0 md4qt_patch_file)
+    list(GET md4qt_patch_parts 1 md4qt_patch_variable)
+    mqt_replace_in_file(
+        "${MD4QT_SOURCE_DIR}/${md4qt_patch_file}"
+        "${md4qt_patch_variable}.removeFirst();"
+        "${md4qt_patch_variable}.remove(0, 1);"
+    )
+endforeach()

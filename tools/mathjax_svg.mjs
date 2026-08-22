@@ -1,4 +1,6 @@
 import MathJax from 'mathjax';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const input = await new Promise((resolve, reject) => {
   let data = '';
@@ -69,6 +71,16 @@ function flattenNestedSvg(svg) {
   return flattened;
 }
 
+function importMathJaxComponent(specifier) {
+  if (/^(?:file|data|node):/.test(specifier)) {
+    return import(specifier);
+  }
+  if (path.isAbsolute(specifier) || /^[a-zA-Z]:[\\/]/.test(specifier)) {
+    return import(pathToFileURL(specifier).href);
+  }
+  return import(specifier);
+}
+
 try {
   const request = JSON.parse(input || '{}');
   const tex = String(request.tex ?? '');
@@ -76,7 +88,7 @@ try {
   const color = String(request.color ?? '#e8eaed');
 
   await MathJax.init({
-    loader: { load: ['input/tex', 'output/svg'] },
+    loader: { load: ['input/tex', 'output/svg'], require: importMathJaxComponent },
     tex: { packages: ['base', 'ams'] },
     output: { linebreaks: { inline: false } },
     svg: { fontCache: 'none' },
