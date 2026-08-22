@@ -177,17 +177,40 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          shopt -s nullglob
-          files=(dist/*)
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "No release artifacts found in dist/."
-            exit 1
-          fi
+          set -o pipefail
 
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
-          else
-            gh release create "$GITHUB_REF_NAME" "${files[@]}" \
-              --title "$GITHUB_REF_NAME" \
-              --generate-notes
+          publish_release() {
+            shopt -s nullglob
+            files=(dist/*)
+            if [ "${#files[@]}" -eq 0 ]; then
+              echo "No release artifacts found in dist/."
+              return 1
+            fi
+
+            echo "Release files:"
+            ls -lah dist
+
+            if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+              echo "Release $GITHUB_REF_NAME already exists."
+            else
+              gh release create "$GITHUB_REF_NAME" \
+                --title "$GITHUB_REF_NAME" \
+                --generate-notes || return $?
+            fi
+
+            for file in "${files[@]}"; do
+              gh release upload "$GITHUB_REF_NAME" "$file" --clobber || return $?
+            done
+          }
+
+          publish_release 2>&1 | tee release.log
+          release_status=${PIPESTATUS[0]}
+          if [ "$release_status" -ne 0 ]; then
+            tail -80 release.log | while IFS= read -r line; do
+              line="${line//'%'/'%25'}"
+              line="${line//$'\r'/'%0D'}"
+              line="${line//$'\n'/'%0A'}"
+              echo "::error title=Release failure::$line"
+            done
+            exit "$release_status"
           fi
