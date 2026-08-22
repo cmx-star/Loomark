@@ -78,8 +78,52 @@ jobs:
           -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}"
           -DMQT_BUNDLE_MATHJAX_RUNTIME=${{ matrix.bundle_mathjax }}
 
-      - name: Build
-        run: cmake --build build --parallel
+      - name: Build Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake --build build --parallel 2>&1 | tee build.log
+
+      - name: Build Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake --build build --parallel 2>&1 | Tee-Object -FilePath build.log
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) {
+            exit $exitCode
+          }
+
+      - name: Annotate Unix build failure
+        if: failure() && runner.os != 'Windows'
+        shell: bash
+        run: |
+          if [ ! -f build.log ]; then
+            exit 0
+          fi
+          grep -E 'FAILED:|fatal error:| error:|undefined reference|ninja:' build.log \
+            | head -50 \
+            | while IFS= read -r line; do
+                line="${line//'%'/'%25'}"
+                line="${line//$'\r'/'%0D'}"
+                line="${line//$'\n'/'%0A'}"
+                echo "::error title=Build failure::$line"
+              done
+
+      - name: Annotate Windows build failure
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (!(Test-Path build.log)) {
+            exit 0
+          }
+          Select-String -Path build.log -Pattern 'FAILED:', 'fatal error:', ' error:', 'undefined reference', 'ninja:' |
+            Select-Object -First 50 |
+            ForEach-Object {
+              $line = $_.Line.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Output "::error title=Build failure::$line"
+            }
 
       - name: Test
         env:
