@@ -33,7 +33,7 @@ FetchContent_Declare(md4qt
 FetchContent_MakeAvailable(md4qt)
 
 target_include_directories(md4qt
-    BEFORE PRIVATE
+    BEFORE PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/qt-compat"
 )
 

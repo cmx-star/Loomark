@@ -21,6 +21,11 @@ mqt_replace_in_file(
     "fn.removeAt(0);"
     "fn.remove(0, 1);"
 )
+mqt_replace_in_file(
+    "${MD4QT_SOURCE_DIR}/src/utils.cpp"
+    "QString(QChar::fromUcs4(c))"
+    "QString::fromUcs4(&c, 1)"
+)
 foreach(md4qt_qstring_remove_last
         "src/autolink_parser.cpp:url"
         "src/link_image_parser.cpp:url"
