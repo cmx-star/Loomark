@@ -34,6 +34,7 @@
 #include <QTextTableCell>
 #include <QTextTableFormat>
 #include <QUrl>
+#include <QtGlobal>
 
 #include <algorithm>
 #include <cmath>
@@ -867,7 +868,9 @@ private:
         if (ordered) {
             listFormat.setIndent(listDepth_);
             listFormat.setStyle(QTextListFormat::ListDecimal);
-            listFormat.setProperty(QTextFormat::ListStart, firstItem->startNumber());
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+            listFormat.setStart(firstItem->startNumber());
+#endif
         }
 
         QTextList* textList = nullptr;
