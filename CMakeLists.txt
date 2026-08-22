@@ -24,6 +24,10 @@ set(INSTALL_MD4QT OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(md4qt
     GIT_REPOSITORY https://invent.kde.org/libraries/md4qt.git
     GIT_TAG 1a878810adeeb534de4de395f4951edd54ab6072
+    PATCH_COMMAND
+        ${CMAKE_COMMAND}
+        -DMD4QT_SOURCE_DIR=<SOURCE_DIR>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patch-md4qt.cmake
 )
 
 FetchContent_MakeAvailable(md4qt)

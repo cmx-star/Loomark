@@ -1,8 +1,14 @@
 #include "gui/markdown_document_renderer.h"
 
 #include <QApplication>
+#include <QByteArray>
 #include <QColor>
+#include <QFileInfo>
 #include <QImage>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QProcess>
+#include <QStandardPaths>
 #include <QTextBlock>
 #include <QTextBrowser>
 #include <QTextDocument>
@@ -12,6 +18,7 @@
 #include <QTextImageFormat>
 #include <QTextList>
 #include <QTextListFormat>
+#include <QTextStream>
 #include <QTextTable>
 #include <QUrl>
 #include <QVariant>
@@ -29,6 +36,63 @@ void require(bool condition, const char* message)
     if (!condition) {
         throw std::runtime_error(message);
     }
+}
+
+QString mathJaxDiagnostic()
+{
+    QString nodePath = qEnvironmentVariable("MQT_NODE");
+    if (nodePath.isEmpty()) {
+        nodePath = QStandardPaths::findExecutable(QStringLiteral("node"));
+    }
+#ifdef Q_OS_WIN
+    if (nodePath.isEmpty()) {
+        nodePath = QStandardPaths::findExecutable(QStringLiteral("node.exe"));
+    }
+#endif
+
+    const QString scriptPath = qEnvironmentVariable("MQT_MATHJAX_SCRIPT");
+    QString report;
+    QTextStream stream(&report);
+    stream << "MQT_NODE=" << qEnvironmentVariable("MQT_NODE")
+           << " exists=" << QFileInfo::exists(qEnvironmentVariable("MQT_NODE")) << '\n';
+    stream << "resolved node=" << nodePath
+           << " exists=" << QFileInfo::exists(nodePath) << '\n';
+    stream << "MQT_MATHJAX_SCRIPT=" << scriptPath
+           << " exists=" << QFileInfo::exists(scriptPath) << '\n';
+
+    if (nodePath.isEmpty() || scriptPath.isEmpty()) {
+        return report;
+    }
+
+    QJsonObject request;
+    request.insert(QStringLiteral("tex"), QStringLiteral("x^2 + y^2"));
+    request.insert(QStringLiteral("display"), false);
+
+    QProcess process;
+    process.setProgram(nodePath);
+    process.setArguments({scriptPath});
+    process.setWorkingDirectory(QFileInfo(scriptPath).absolutePath());
+    process.start();
+    if (!process.waitForStarted(4000)) {
+        stream << "helper start failed: " << process.errorString() << '\n';
+        return report;
+    }
+    process.write(QJsonDocument(request).toJson(QJsonDocument::Compact));
+    process.closeWriteChannel();
+    if (!process.waitForFinished(4000)) {
+        stream << "helper timed out: " << process.errorString() << '\n';
+        process.kill();
+        process.waitForFinished();
+        return report;
+    }
+
+    const QByteArray stdoutData = process.readAllStandardOutput();
+    const QByteArray stderrData = process.readAllStandardError();
+    stream << "helper exitStatus=" << process.exitStatus()
+           << " exitCode=" << process.exitCode() << '\n';
+    stream << "helper stdout=" << QString::fromUtf8(stdoutData.left(500)) << '\n';
+    stream << "helper stderr=" << QString::fromUtf8(stderrData.left(500)) << '\n';
+    return report;
 }
 
 bool hasFormattedText(const QTextDocument& document, const QString& needle, auto predicate)
@@ -276,7 +340,10 @@ void testSafeFallbacks()
     require(result.success, "fallback Markdown should render");
     const QString text = document.toPlainText();
     require(text.contains(QStringLiteral("<script>")), "raw HTML should remain visible as text");
-    require(!text.contains(QStringLiteral("$x^2 + y^2$")), "math delimiters should not be shown when MathJax renders");
+    if (text.contains(QStringLiteral("$x^2 + y^2$"))) {
+        std::cerr << mathJaxDiagnostic().toStdString();
+        require(false, "math delimiters should not be shown when MathJax renders");
+    }
     require(hasImageWithNamePrefix(document, QStringLiteral("mqt-math:")),
         "math should render through MathJax as an embedded image resource");
     require(imageCountWithNamePrefix(document, QStringLiteral("mqt-math:")) >= 2,
