@@ -867,7 +867,7 @@ private:
         if (ordered) {
             listFormat.setIndent(listDepth_);
             listFormat.setStyle(QTextListFormat::ListDecimal);
-            listFormat.setStart(firstItem->startNumber());
+            listFormat.setProperty(QTextFormat::ListStart, firstItem->startNumber());
         }
 
         QTextList* textList = nullptr;
