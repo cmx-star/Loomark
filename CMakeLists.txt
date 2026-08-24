@@ -206,6 +206,16 @@ if(APPLE)
                 "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules/@mathjax/mathjax-newcm-font/svg/dynamic"
             VERBATIM
         )
+        if(MQT_NODE_EXECUTABLE)
+            add_custom_command(TARGET markdown_qt_gui POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${MQT_NODE_EXECUTABLE}"
+                    "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node"
+                COMMAND chmod +x
+                    "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node"
+                VERBATIM
+            )
+        endif()
     endif()
 endif()
 
@@ -217,6 +227,9 @@ install(TARGETS markdown_qt_p0 markdown_qt_gui
 if(NOT APPLE)
     install(FILES tools/mathjax_svg.mjs DESTINATION ${CMAKE_INSTALL_BINDIR})
     if(MQT_BUNDLE_MATHJAX_RUNTIME)
+        if(WIN32 AND MQT_NODE_EXECUTABLE)
+            install(PROGRAMS ${MQT_NODE_EXECUTABLE} DESTINATION ${CMAKE_INSTALL_BINDIR})
+        endif()
         install(FILES ${MATHJAX_RUNTIME_MATHJAX_FILES}
             DESTINATION ${CMAKE_INSTALL_BINDIR}/node_modules/mathjax
         )

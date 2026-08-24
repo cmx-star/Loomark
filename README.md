@@ -25,7 +25,7 @@ The product roadmap is in `large-markdown-editor-technical-solution-and-roadmap.
 - The GUI writes a local `loomark.log` under the operating system app data location. Users can open the directory from `帮助 -> 打开日志目录` when reporting startup, rendering, or update-check issues.
 - On startup, and from `帮助 -> 检查更新`, the GUI checks the latest GitHub Release at `https://github.com/cmx-star/Loomark/releases`. If a newer version exists, it opens the platform release asset download or the release page after user confirmation.
 
-`md4qt` is acquired with CMake `FetchContent`. The first configure needs network access to the official KDE repository; subsequent builds can reuse the populated `build/<preset>/_deps` cache. MathJax is acquired with npm; packaging copies only the trimmed Node runtime files needed for TeX-to-SVG preview. The helper currently requires a local Node.js runtime.
+`md4qt` is acquired with CMake `FetchContent`. The first configure needs network access to the official KDE repository; subsequent builds can reuse the populated `build/<preset>/_deps` cache. MathJax is acquired with npm; packaging copies only the trimmed MathJax files needed for TeX-to-SVG preview. macOS and Windows packages also include the Node.js executable used by the helper so formulas render when the app is launched outside a developer shell. The Linux `.deb` declares `nodejs` as a package dependency.
 
 ## Build after CMake is installed
 

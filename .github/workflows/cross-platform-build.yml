@@ -179,13 +179,16 @@ jobs:
               "$package_dir/Loomark.app/Contents/Frameworks/QtWidgets.framework" \
               "$package_dir/Loomark.app/Contents/Frameworks/QtSvg.framework" \
               "$package_dir/Loomark.app/Contents/PlugIns/platforms/libqcocoa.dylib" \
-              "$package_dir/Loomark.app/Contents/PlugIns/tls/libqsecuretransportbackend.dylib"
+              "$package_dir/Loomark.app/Contents/PlugIns/tls/libqsecuretransportbackend.dylib" \
+              "$package_dir/Loomark.app/Contents/Resources/node" \
+              "$package_dir/Loomark.app/Contents/Resources/node_modules/mathjax/input/tex.js"
             do
               if [ ! -e "$path" ]; then
                 echo "macOS package is missing $path"
                 exit 1
               fi
             done
+            "$package_dir/Loomark.app/Contents/Resources/node" --version
             dmg_root="$PWD/dmg-root"
             rm -rf "$dmg_root"
             mkdir -p "$dmg_root"
@@ -283,7 +286,9 @@ jobs:
             'bin\Qt6Widgets.dll',
             'bin\Qt6Svg.dll',
             'bin\platforms\qwindows.dll',
-            'bin\tls\qschannelbackend.dll'
+            'bin\tls\qschannelbackend.dll',
+            'bin\node.exe',
+            'bin\node_modules\mathjax\input\tex.js'
           )
           foreach ($path in $requiredPaths) {
             $fullPath = Join-Path $packageDir $path

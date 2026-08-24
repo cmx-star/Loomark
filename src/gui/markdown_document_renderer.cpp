@@ -7,6 +7,7 @@
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QColor>
+#include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 #include <QFontDatabase>
@@ -17,6 +18,7 @@
 #include <QPainter>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QSet>
 #include <QStandardPaths>
 #include <QSvgRenderer>
 #include <QTextBlockFormat>
@@ -170,6 +172,22 @@ QHash<QString, MathRenderedImage>& mathImageCache()
     return cache;
 }
 
+QSet<QString>& mathWarningKeys()
+{
+    static QSet<QString> keys;
+    return keys;
+}
+
+void warnMathJaxOnce(const QString& key, const QString& message)
+{
+    QSet<QString>& keys = mathWarningKeys();
+    if (keys.contains(key)) {
+        return;
+    }
+    keys.insert(key);
+    qWarning().noquote() << message;
+}
+
 QString mathJaxScriptPath()
 {
     const QString configuredPath = qEnvironmentVariable("MQT_MATHJAX_SCRIPT");
@@ -196,6 +214,23 @@ QString nodeExecutablePath()
     const QString configuredPath = qEnvironmentVariable("MQT_NODE");
     if (!configuredPath.isEmpty() && QFileInfo::exists(configuredPath)) {
         return configuredPath;
+    }
+
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList bundledCandidates {
+#ifdef Q_OS_MACOS
+        QDir(appDir).absoluteFilePath(QStringLiteral("../Resources/node")),
+#endif
+#ifdef Q_OS_WIN
+        QDir(appDir).absoluteFilePath(QStringLiteral("node.exe")),
+#else
+        QDir(appDir).absoluteFilePath(QStringLiteral("node")),
+#endif
+    };
+    for (const QString& candidate : bundledCandidates) {
+        if (QFileInfo::exists(candidate)) {
+            return candidate;
+        }
     }
 
     const QString pathNode = QStandardPaths::findExecutable(QStringLiteral("node"));
@@ -360,6 +395,11 @@ std::optional<MathRenderedImage> renderMathImageWithMathJax(const QString& tex, 
     const QString nodePath = nodeExecutablePath();
     const QString scriptPath = mathJaxScriptPath();
     if (nodePath.isEmpty() || scriptPath.isEmpty()) {
+        warnMathJaxOnce(
+            QStringLiteral("missing-runtime"),
+            QStringLiteral("MathJax disabled: node=%1 script=%2")
+                .arg(nodePath.isEmpty() ? QStringLiteral("<missing>") : nodePath,
+                    scriptPath.isEmpty() ? QStringLiteral("<missing>") : scriptPath));
         return std::nullopt;
     }
 
@@ -374,32 +414,52 @@ std::optional<MathRenderedImage> renderMathImageWithMathJax(const QString& tex, 
     process.setWorkingDirectory(QFileInfo(scriptPath).absolutePath());
     process.start();
     if (!process.waitForStarted(kMathJaxTimeoutMs)) {
+        warnMathJaxOnce(
+            QStringLiteral("start-failed"),
+            QStringLiteral("MathJax helper failed to start: node=%1 script=%2 error=%3")
+                .arg(nodePath, scriptPath, process.errorString()));
         return std::nullopt;
     }
     process.write(QJsonDocument(request).toJson(QJsonDocument::Compact));
     process.closeWriteChannel();
     if (!process.waitForFinished(kMathJaxTimeoutMs)) {
+        warnMathJaxOnce(
+            QStringLiteral("timeout"),
+            QStringLiteral("MathJax helper timed out: node=%1 script=%2 error=%3")
+                .arg(nodePath, scriptPath, process.errorString()));
         process.kill();
         process.waitForFinished();
         return std::nullopt;
     }
     if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        warnMathJaxOnce(
+            QStringLiteral("exit-failed"),
+            QStringLiteral("MathJax helper failed: exitStatus=%1 exitCode=%2 stdout=%3 stderr=%4")
+                .arg(static_cast<int>(process.exitStatus()))
+                .arg(process.exitCode())
+                .arg(QString::fromUtf8(process.readAllStandardOutput().left(300)))
+                .arg(QString::fromUtf8(process.readAllStandardError().left(300))));
         return std::nullopt;
     }
 
     QJsonParseError parseError;
     const QJsonDocument response = QJsonDocument::fromJson(process.readAllStandardOutput(), &parseError);
     if (parseError.error != QJsonParseError::NoError || !response.isObject()) {
+        warnMathJaxOnce(
+            QStringLiteral("bad-json"),
+            QStringLiteral("MathJax helper returned invalid JSON: %1").arg(parseError.errorString()));
         return std::nullopt;
     }
     const QString svg = response.object().value(QStringLiteral("svg")).toString();
     if (svg.isEmpty()) {
+        warnMathJaxOnce(QStringLiteral("empty-svg"), QStringLiteral("MathJax helper returned an empty SVG."));
         return std::nullopt;
     }
 
     const QByteArray svgData = svg.toUtf8();
     QSvgRenderer renderer(svgData);
     if (!renderer.isValid()) {
+        warnMathJaxOnce(QStringLiteral("invalid-svg"), QStringLiteral("MathJax helper returned an invalid SVG."));
         return std::nullopt;
     }
 
