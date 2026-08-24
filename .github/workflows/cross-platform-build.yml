@@ -18,14 +18,14 @@ jobs:
         include:
           - os: macos-14
             bundle_mathjax: ON
-            archive_name: loomark-macos.zip
+            archive_name: loomark-macos.dmg
           - os: ubuntu-24.04
             bundle_mathjax: ON
-            archive_name: loomark-linux.tar.gz
+            archive_name: loomark-linux.deb
           - os: windows-2022
             qt_arch: win64_msvc2022_64
             bundle_mathjax: ON
-            archive_name: loomark-windows.zip
+            archive_name: loomark-windows-setup.exe
 
     steps:
       - name: Checkout
@@ -43,7 +43,7 @@ jobs:
 
       - name: Install Ninja on Windows
         if: runner.os == 'Windows'
-        run: choco install ninja
+        run: choco install ninja innosetup --yes --no-progress
 
       - name: Install Qt
         if: runner.os == 'macOS'
@@ -125,9 +125,14 @@ jobs:
               Write-Output "::error title=Build failure::$line"
             }
 
-      - name: Test
+      - name: Test Unix
+        if: runner.os != 'Windows'
         env:
-          QT_QPA_PLATFORM: ${{ runner.os == 'Windows' && '' || 'offscreen' }}
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Test Windows
+        if: runner.os == 'Windows'
         run: ctest --test-dir build --output-on-failure
 
       - name: Package Unix
@@ -135,8 +140,8 @@ jobs:
         shell: bash
         run: |
           package_dir="$PWD/package"
-          cmake --install build --prefix "$package_dir"
           if [ "${{ runner.os }}" = "macOS" ]; then
+            cmake --install build --prefix "$package_dir"
             macdeployqt_path="$(command -v macdeployqt || true)"
             if [ -z "$macdeployqt_path" ] && [ -n "${QT_ROOT_DIR:-}" ]; then
               macdeployqt_path="$QT_ROOT_DIR/bin/macdeployqt"
@@ -152,9 +157,54 @@ jobs:
               echo "macOS app still references external Qt framework paths."
               exit 1
             fi
-            ditto -c -k --sequesterRsrc --keepParent "$package_dir" "$PWD/${{ matrix.archive_name }}"
+            dmg_root="$PWD/dmg-root"
+            rm -rf "$dmg_root"
+            mkdir -p "$dmg_root"
+            cp -R "$package_dir/Loomark.app" "$dmg_root/"
+            ln -s /Applications "$dmg_root/Applications"
+            hdiutil create \
+              -volname "Loomark" \
+              -srcfolder "$dmg_root" \
+              -ov \
+              -format UDZO \
+              "$PWD/${{ matrix.archive_name }}"
           else
-            tar -C "$PWD" -czf "$PWD/${{ matrix.archive_name }}" package
+            cmake --install build --prefix "$package_dir/usr"
+            ldd "$package_dir/usr/bin/markdown_qt_gui" | tee linux-deps.txt
+            if grep -F "not found" linux-deps.txt; then
+              echo "Linux package has unresolved shared library dependencies."
+              exit 1
+            fi
+            ln -s markdown_qt_gui "$package_dir/usr/bin/loomark"
+            mkdir -p "$package_dir/usr/share/applications"
+            printf '%s\n' \
+              '[Desktop Entry]' \
+              'Type=Application' \
+              'Name=Loomark' \
+              'Comment=Native Markdown editor' \
+              'Exec=loomark' \
+              'Terminal=false' \
+              'Categories=Office;TextEditor;' \
+              > "$package_dir/usr/share/applications/loomark.desktop"
+
+            package_version="${GITHUB_REF_NAME#v}"
+            if [ "$package_version" = "$GITHUB_REF_NAME" ]; then
+              package_version="0.1.0~ci"
+            fi
+            package_arch="$(dpkg --print-architecture)"
+            mkdir -p "$package_dir/DEBIAN"
+            printf '%s\n' \
+              'Package: loomark' \
+              "Version: $package_version" \
+              'Section: editors' \
+              'Priority: optional' \
+              "Architecture: $package_arch" \
+              'Maintainer: Loomark Maintainers <noreply@example.com>' \
+              'Depends: libc6, libstdc++6, libgcc-s1, libgl1, libqt6core6t64 | libqt6core6, libqt6gui6, libqt6widgets6, libqt6svg6, nodejs' \
+              'Description: Native large-file Markdown editor prototype' \
+              ' Loomark is a native Qt Markdown editor prototype with local editing and preview.' \
+              > "$package_dir/DEBIAN/control"
+            dpkg-deb --root-owner-group --build "$package_dir" "$PWD/${{ matrix.archive_name }}"
           fi
 
       - name: Package Windows
@@ -163,7 +213,60 @@ jobs:
         run: |
           $packageDir = Join-Path $PWD 'package'
           cmake --install build --prefix $packageDir
-          Compress-Archive -Path $packageDir -DestinationPath (Join-Path $PWD '${{ matrix.archive_name }}')
+          $guiExe = Join-Path $packageDir 'bin\Loomark.exe'
+          if (!(Test-Path $guiExe)) {
+            Write-Error "GUI executable was not installed at $guiExe"
+            exit 1
+          }
+
+          $deployCommand = Get-Command windeployqt -ErrorAction SilentlyContinue
+          $deployPath = if ($deployCommand) { $deployCommand.Source } else { Join-Path $env:QT_ROOT_DIR 'bin\windeployqt.exe' }
+          if (!(Test-Path $deployPath)) {
+            Write-Error "windeployqt was not found."
+            exit 1
+          }
+
+          & $deployPath --release --compiler-runtime $guiExe
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+          $requiredPaths = @(
+            'bin\Qt6Core.dll',
+            'bin\Qt6Gui.dll',
+            'bin\Qt6Widgets.dll',
+            'bin\Qt6Svg.dll',
+            'bin\platforms\qwindows.dll'
+          )
+          foreach ($path in $requiredPaths) {
+            $fullPath = Join-Path $packageDir $path
+            if (!(Test-Path $fullPath)) {
+              Write-Error "Windows package is missing $path"
+              exit 1
+            }
+          }
+
+          $packageVersion = if ($env:GITHUB_REF_NAME -like 'v*') { $env:GITHUB_REF_NAME.Substring(1) } else { '0.1.0-ci' }
+          $isccCommand = Get-Command iscc -ErrorAction SilentlyContinue
+          if (!$isccCommand) {
+            Write-Error "Inno Setup compiler iscc was not found."
+            exit 1
+          }
+
+          & $isccCommand.Source `
+            "/DSourceDir=$packageDir" `
+            "/DOutputDir=$PWD" `
+            "/DMyAppVersion=$packageVersion" `
+            (Join-Path $PWD 'packaging\windows\loomark.iss')
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+          $installer = Join-Path $PWD '${{ matrix.archive_name }}'
+          if (!(Test-Path $installer)) {
+            Write-Error "Windows installer was not created at $installer"
+            exit 1
+          }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

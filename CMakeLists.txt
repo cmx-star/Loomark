@@ -127,6 +127,7 @@ if(WIN32)
     set_target_properties(markdown_qt_gui
         PROPERTIES
             WIN32_EXECUTABLE TRUE
+            OUTPUT_NAME "Loomark"
     )
 endif()
 if(MQT_NODE_EXECUTABLE)
