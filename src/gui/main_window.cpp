@@ -1,13 +1,18 @@
 #include "gui/main_window.h"
 
+#include "gui/application_logger.h"
 #include "gui/markdown_document_renderer.h"
+#include "gui/update_checker.h"
 
 #include "core/file_tier.h"
 #include "core/markdown_index.h"
 
 #include <QAction>
 #include <QApplication>
+#include <QAbstractButton>
 #include <QCloseEvent>
+#include <QDebug>
+#include <QDesktopServices>
 #include <QFileDialog>
 #include <QFrame>
 #include <QFontDatabase>
@@ -18,6 +23,7 @@
 #include <QMenuBar>
 #include <QKeySequence>
 #include <QPlainTextEdit>
+#include <QPushButton>
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QSize>
@@ -259,6 +265,7 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
     setCentralWidget(splitter);
 
     auto* fileMenu = menuBar()->addMenu(QStringLiteral("文件"));
+    auto* helpMenu = menuBar()->addMenu(QStringLiteral("帮助"));
     auto* toolBar = addToolBar(QStringLiteral("文件"));
     toolBar->setMovable(false);
     toolBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
@@ -269,6 +276,8 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
     auto* saveAsAction = new QAction(themedIcon(QStringLiteral("create_new_folder")), QStringLiteral("另存为"), this);
     reloadAction_ = new QAction(themedIcon(QStringLiteral("restart_alt")), QStringLiteral("重新载入"), this);
     auto* quitAction = new QAction(QStringLiteral("退出"), this);
+    checkUpdatesAction_ = new QAction(QStringLiteral("检查更新"), this);
+    auto* openLogDirectoryAction = new QAction(QStringLiteral("打开日志目录"), this);
 
     openAction->setShortcut(QKeySequence::Open);
     saveAction_->setShortcut(QKeySequence::Save);
@@ -281,6 +290,10 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
     connect(saveAsAction, &QAction::triggered, this, &MainWindow::saveDocumentAs);
     connect(reloadAction_, &QAction::triggered, this, &MainWindow::reloadDocument);
     connect(quitAction, &QAction::triggered, this, &QWidget::close);
+    connect(checkUpdatesAction_, &QAction::triggered, this, [this] {
+        checkForUpdates(true);
+    });
+    connect(openLogDirectoryAction, &QAction::triggered, this, &MainWindow::openLogDirectory);
     connect(editor_, &QPlainTextEdit::textChanged, this, [this] {
         dirty_ = true;
         updateWindowState();
@@ -303,6 +316,8 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
     fileMenu->addAction(reloadAction_);
     fileMenu->addSeparator();
     fileMenu->addAction(quitAction);
+    helpMenu->addAction(checkUpdatesAction_);
+    helpMenu->addAction(openLogDirectoryAction);
 
     toolBar->addAction(openAction);
     toolBar->addAction(saveAction_);
@@ -324,6 +339,56 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
     previewTimer_->setInterval(60);
     connect(previewTimer_, &QTimer::timeout, this, &MainWindow::refreshPreview);
 
+    updateChecker_ = new UpdateChecker(this);
+    connect(updateChecker_, &UpdateChecker::updateAvailable, this, [this](const ReleaseInfo& release, const ReleaseAsset& asset) {
+        checkUpdatesAction_->setEnabled(true);
+        updateCheckUserInitiated_ = false;
+        qInfo().noquote() << QStringLiteral("Update available: current=%1 latest=%2 release=%3")
+            .arg(currentAppVersion(), release.version, release.releaseUrl.toString());
+
+        QMessageBox box(this);
+        box.setIcon(QMessageBox::Information);
+        box.setWindowTitle(QStringLiteral("发现新版本"));
+        box.setText(QStringLiteral("Loomark %1 已发布。").arg(release.tagName));
+        QString details = QStringLiteral("当前版本: %1\n最新版本: %2\n发布地址: %3")
+            .arg(currentAppVersion(), release.version, release.releaseUrl.toString());
+        if (!asset.name.isEmpty()) {
+            details += QStringLiteral("\n下载文件: %1").arg(asset.name);
+        }
+        box.setInformativeText(details);
+        QAbstractButton* downloadButton = box.addButton(asset.downloadUrl.isValid() ? QStringLiteral("下载更新") : QStringLiteral("打开发布页"), QMessageBox::AcceptRole);
+        QAbstractButton* releaseButton = box.addButton(QStringLiteral("发布页"), QMessageBox::ActionRole);
+        box.addButton(QStringLiteral("稍后"), QMessageBox::RejectRole);
+        box.exec();
+
+        if (box.clickedButton() == downloadButton) {
+            QDesktopServices::openUrl(asset.downloadUrl.isValid() ? asset.downloadUrl : release.releaseUrl);
+        } else if (box.clickedButton() == releaseButton) {
+            QDesktopServices::openUrl(release.releaseUrl);
+        }
+    });
+    connect(updateChecker_, &UpdateChecker::alreadyUpToDate, this, [this](const QString& latestVersion) {
+        checkUpdatesAction_->setEnabled(true);
+        if (updateCheckUserInitiated_) {
+            QMessageBox::information(
+                this,
+                QStringLiteral("已是最新版本"),
+                QStringLiteral("当前版本 %1 已是最新版本。GitHub 最新版本: %2。")
+                    .arg(currentAppVersion(), latestVersion));
+        }
+        updateCheckUserInitiated_ = false;
+        qInfo().noquote() << QStringLiteral("Update check complete: current=%1 latest=%2")
+            .arg(currentAppVersion(), latestVersion);
+    });
+    connect(updateChecker_, &UpdateChecker::checkFailed, this, [this](const QString& message) {
+        checkUpdatesAction_->setEnabled(true);
+        if (updateCheckUserInitiated_) {
+            QMessageBox::warning(this, QStringLiteral("检查更新失败"), message);
+        }
+        updateCheckUserInitiated_ = false;
+        qWarning().noquote() << QStringLiteral("Update check failed: %1").arg(message);
+    });
+
     applyUiStyle();
     updatePreviewLayout();
     saveAction_->setEnabled(false);
@@ -335,6 +400,9 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
     if (!initialPath.empty()) {
         loadDocument(initialPath);
     }
+    QTimer::singleShot(1600, this, [this] {
+        checkForUpdates(false);
+    });
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
@@ -403,6 +471,34 @@ void MainWindow::reloadDocument()
         return;
     }
     loadDocument(currentPath_);
+}
+
+void MainWindow::checkForUpdates(bool userInitiated)
+{
+    if (!updateChecker_ || !checkUpdatesAction_) {
+        return;
+    }
+    updateCheckUserInitiated_ = updateCheckUserInitiated_ || userInitiated;
+    checkUpdatesAction_->setEnabled(false);
+    if (userInitiated) {
+        statusBar()->showMessage(QStringLiteral("正在检查 GitHub 更新..."), 2000);
+    }
+    qInfo().noquote() << QStringLiteral("Checking updates from %1").arg(githubLatestReleaseApiUrl());
+    updateChecker_->checkNow();
+}
+
+void MainWindow::openLogDirectory()
+{
+    QString directory = applicationLogDirectory();
+    if (directory.isEmpty()) {
+        initializeApplicationLogging();
+        directory = applicationLogDirectory();
+    }
+    if (directory.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("日志目录不可用"), QStringLiteral("当前无法创建本地日志目录。"));
+        return;
+    }
+    QDesktopServices::openUrl(QUrl::fromLocalFile(directory));
 }
 
 bool MainWindow::loadDocument(const std::filesystem::path& path)

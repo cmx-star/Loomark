@@ -11,6 +11,7 @@ include(GNUInstallDirs)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 include(FetchContent)
@@ -56,7 +57,15 @@ target_compile_options(markdown_qt_core
         $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
 )
 
-find_package(Qt6 COMPONENTS Widgets Svg REQUIRED)
+find_package(Qt6 COMPONENTS Network Widgets Svg REQUIRED)
+
+set(MQT_APP_VERSION "${PROJECT_VERSION}" CACHE STRING "Application version displayed in the GUI and update checks.")
+if(DEFINED ENV{GITHUB_REF_NAME})
+    set(MQT_GITHUB_REF_NAME "$ENV{GITHUB_REF_NAME}")
+    if(MQT_GITHUB_REF_NAME MATCHES "^v[0-9]+(\\.[0-9]+)*")
+        string(REGEX REPLACE "^v" "" MQT_APP_VERSION "${MQT_GITHUB_REF_NAME}")
+    endif()
+endif()
 
 set(MATHJAX_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/tools/mathjax_svg.mjs")
 set(MATHJAX_NODE_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/node_modules")
@@ -95,9 +104,13 @@ target_link_libraries(markdown_qt_p0
 
 add_executable(markdown_qt_gui
     resources/resources.qrc
+    src/gui/application_logger.h
+    src/gui/application_logger.cpp
     src/gui/main.cpp
     src/gui/markdown_document_renderer.cpp
+    src/gui/update_checker.h
     src/gui/main_window.cpp
+    src/gui/update_checker.cpp
 )
 
 if(APPLE)
@@ -115,8 +128,13 @@ target_link_libraries(markdown_qt_gui
     PRIVATE
         markdown_qt_core
         md4qt::md4qt
+        Qt6::Network
         Qt6::Widgets
         Qt6::Svg
+)
+target_compile_definitions(markdown_qt_gui
+    PRIVATE
+        "MQT_APP_VERSION=\"${MQT_APP_VERSION}\""
 )
 
 target_compile_options(markdown_qt_gui
@@ -303,6 +321,29 @@ add_custom_target(markdown_renderer_test_mathjax_runtime
 add_dependencies(markdown_qt_markdown_renderer_tests markdown_renderer_test_mathjax_runtime)
 
 add_test(NAME markdown_qt_markdown_renderer_tests COMMAND markdown_qt_markdown_renderer_tests)
+
+add_executable(markdown_qt_update_checker_tests
+    src/gui/update_checker.h
+    src/gui/update_checker.cpp
+    tests/update_checker_tests.cpp
+)
+
+target_link_libraries(markdown_qt_update_checker_tests
+    PRIVATE
+        Qt6::Network
+)
+
+target_include_directories(markdown_qt_update_checker_tests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_compile_options(markdown_qt_update_checker_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+
+add_test(NAME markdown_qt_update_checker_tests COMMAND markdown_qt_update_checker_tests)
 set(MARKDOWN_RENDERER_TEST_ENV "MQT_MATHJAX_SCRIPT=${MATHJAX_TEST_RUNTIME_DIR}/mathjax_svg.mjs")
 if(MQT_NODE_EXECUTABLE)
     list(APPEND MARKDOWN_RENDERER_TEST_ENV "MQT_NODE=${MQT_NODE_EXECUTABLE}")

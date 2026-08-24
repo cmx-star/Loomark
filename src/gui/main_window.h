@@ -14,6 +14,8 @@ class QTimer;
 
 namespace mqt::gui {
 
+class UpdateChecker;
+
 class MainWindow final : public QMainWindow {
 public:
     explicit MainWindow(const std::filesystem::path& initialPath = {}, QWidget* parent = nullptr);
@@ -27,6 +29,8 @@ private:
     void saveDocument();
     void saveDocumentAs();
     void reloadDocument();
+    void checkForUpdates(bool userInitiated);
+    void openLogDirectory();
     bool loadDocument(const std::filesystem::path& path);
     bool maybeSaveChanges();
     void refreshPreview();
@@ -55,7 +59,10 @@ private:
     QLabel* previewMetaLabel_ = nullptr;
     QAction* saveAction_ = nullptr;
     QAction* reloadAction_ = nullptr;
+    QAction* checkUpdatesAction_ = nullptr;
     QTimer* previewTimer_ = nullptr;
+    UpdateChecker* updateChecker_ = nullptr;
+    bool updateCheckUserInitiated_ = false;
 };
 
 } // namespace mqt::gui

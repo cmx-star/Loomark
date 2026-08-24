@@ -1,6 +1,8 @@
+#include "gui/application_logger.h"
 #include "gui/main_window.h"
 
 #include <QApplication>
+#include <QDebug>
 #include <QFile>
 #include <QFontDatabase>
 #include <QIcon>
@@ -40,6 +42,8 @@ int main(int argc, char** argv)
     app.setWindowIcon(QIcon(QStringLiteral(":/brand/loomark.svg")));
     app.setFont(QFontDatabase::systemFont(QFontDatabase::GeneralFont));
     app.setStyleSheet(loadStyleSheet());
+    const QString logPath = mqt::gui::initializeApplicationLogging();
+    qInfo().noquote() << QStringLiteral("Loomark started. Log file: %1").arg(logPath);
 
     std::filesystem::path initialPath;
     const QStringList args = app.arguments();
