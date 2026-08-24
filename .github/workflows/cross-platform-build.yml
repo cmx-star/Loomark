@@ -153,10 +153,23 @@ jobs:
 
             "$macdeployqt_path" "$package_dir/Loomark.app" -verbose=2
             otool -L "$package_dir/Loomark.app/Contents/MacOS/Loomark" | tee macos-deps.txt
-            if grep -E '/opt/homebrew|/Users/runner|/Qt/.*/(lib|Frameworks)/Qt' macos-deps.txt; then
+            awk '/^[[:space:]]/ { print }' macos-deps.txt > macos-linked-libs.txt
+            if grep -E '/opt/homebrew|/Users/runner|/Qt/.*/(lib|Frameworks)/Qt' macos-linked-libs.txt; then
               echo "macOS app still references external Qt framework paths."
               exit 1
             fi
+            for path in \
+              "$package_dir/Loomark.app/Contents/Frameworks/QtCore.framework" \
+              "$package_dir/Loomark.app/Contents/Frameworks/QtGui.framework" \
+              "$package_dir/Loomark.app/Contents/Frameworks/QtWidgets.framework" \
+              "$package_dir/Loomark.app/Contents/Frameworks/QtSvg.framework" \
+              "$package_dir/Loomark.app/Contents/PlugIns/platforms/libqcocoa.dylib"
+            do
+              if [ ! -e "$path" ]; then
+                echo "macOS package is missing $path"
+                exit 1
+              fi
+            done
             dmg_root="$PWD/dmg-root"
             rm -rf "$dmg_root"
             mkdir -p "$dmg_root"
