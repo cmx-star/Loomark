@@ -151,13 +151,25 @@ jobs:
               exit 1
             fi
 
+            app_binary="$package_dir/Loomark.app/Contents/MacOS/Loomark"
             "$macdeployqt_path" "$package_dir/Loomark.app" -verbose=2
+            if otool -L "$app_binary" | awk '/^[[:space:]]*@rpath\/Qt/ { found = 1 } END { exit found ? 0 : 1 }'; then
+              if ! otool -l "$app_binary" | grep -F '@executable_path/../Frameworks'; then
+                install_name_tool -add_rpath '@executable_path/../Frameworks' "$app_binary"
+              fi
+            fi
             codesign --force --deep --sign - --timestamp=none "$package_dir/Loomark.app"
             codesign --verify --deep --strict --verbose=2 "$package_dir/Loomark.app"
-            otool -L "$package_dir/Loomark.app/Contents/MacOS/Loomark" | tee macos-deps.txt
+            otool -L "$app_binary" | tee macos-deps.txt
+            otool -l "$app_binary" | tee macos-load-commands.txt
             awk '/^[[:space:]]/ { print }' macos-deps.txt > macos-linked-libs.txt
             if grep -E '/opt/homebrew|/Users/runner|/Qt/.*/(lib|Frameworks)/Qt' macos-linked-libs.txt; then
               echo "macOS app still references external Qt framework paths."
+              exit 1
+            fi
+            if awk '/^[[:space:]]*@rpath\/Qt/ { found = 1 } END { exit found ? 0 : 1 }' macos-linked-libs.txt &&
+              ! grep -F '@executable_path/../Frameworks' macos-load-commands.txt; then
+              echo "macOS app uses @rpath Qt frameworks without an LC_RPATH for bundled Frameworks."
               exit 1
             fi
             for path in \
