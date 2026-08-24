@@ -19,6 +19,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#else
+#include <sys/statvfs.h>
 #endif
 
 namespace mqt::core {
@@ -404,6 +406,28 @@ void writeFileAtomically(const std::filesystem::path& path, std::string_view con
         std::filesystem::remove(tempPath, ec);
         throw;
     }
+}
+
+std::uint64_t availableDiskBytes(const std::filesystem::path& path)
+{
+    auto directory = path.parent_path();
+    if (directory.empty()) {
+        directory = std::filesystem::current_path();
+    }
+#ifdef _WIN32
+    const auto wide = directory.wstring();
+    ULARGE_INTEGER freeBytes {};
+    if (!GetDiskFreeSpaceExW(wide.c_str(), &freeBytes, nullptr, nullptr)) {
+        throw std::runtime_error("failed to query free disk space for: " + directory.string());
+    }
+    return static_cast<std::uint64_t>(freeBytes.QuadPart);
+#else
+    struct statvfs stats {};
+    if (statvfs(directory.c_str(), &stats) != 0) {
+        throw std::runtime_error("failed to query free disk space for: " + directory.string());
+    }
+    return static_cast<std::uint64_t>(stats.f_bavail) * static_cast<std::uint64_t>(stats.f_frsize);
+#endif
 }
 
 } // namespace mqt::core

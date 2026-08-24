@@ -133,6 +133,20 @@ void testPreviewTruncation(const std::filesystem::path& root)
     require(index.bytesScanned > 0, "truncated preview index should retain scan progress");
 }
 
+void testAvailableDiskBytes(const std::filesystem::path& root)
+{
+    const auto bytes = mqt::core::availableDiskBytes(root);
+    require(bytes > 0, "existing directory should report positive free space");
+
+    bool threw = false;
+    try {
+        (void)mqt::core::availableDiskBytes(root / "missing-dir" / "file.md");
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    require(threw, "unresolvable path should throw instead of reporting unknown free space");
+}
+
 } // namespace
 
 int main()
@@ -146,6 +160,7 @@ int main()
         testLocateByteRange(root);
         testPreviewIndex(root);
         testPreviewTruncation(root);
+        testAvailableDiskBytes(root);
         std::filesystem::remove_all(root);
         std::cout << "core tests passed\n";
         return EXIT_SUCCESS;

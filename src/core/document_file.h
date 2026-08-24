@@ -60,4 +60,10 @@ struct LocateResult {
 [[nodiscard]] LocateResult locateByteRange(const std::filesystem::path& path, ByteRange range);
 void writeFileAtomically(const std::filesystem::path& path, std::string_view content);
 
+/// Returns free disk space in bytes for the volume that contains `path`.
+/// The path itself does not need to exist, but its parent directory must be
+/// resolvable. Throws std::runtime_error when the volume cannot be queried so
+/// callers never mistake an unknown state for a safe one.
+[[nodiscard]] std::uint64_t availableDiskBytes(const std::filesystem::path& path);
+
 } // namespace mqt::core
