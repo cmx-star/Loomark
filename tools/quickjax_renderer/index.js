@@ -68,8 +68,13 @@ const packages = [
 ];
 
 const texInput = new TeX({ packages });
+// fontCache: "none" inlines every glyph as a plain <path> at its usage site.
+// The default "local" mode emits <defs> + <use xlink:href="#MJX-..."> pairs,
+// which Qt's SVG renderer (especially <= 6.4) fails to resolve when the
+// referenced path has empty path data or carries a scale() transform on the
+// <use> element, dropping visible strokes from rendered formulas.
 const svgOutput = new SVG({
-  fontCache: "local",
+  fontCache: "none",
   linebreaks: { inline: false },
 });
 const htmlDoc = mathjax.document("", {
@@ -79,10 +84,77 @@ const htmlDoc = mathjax.document("", {
 
 svgOutput.font.loadDynamicFilesSync();
 
+function countSvgTags(svg) {
+  return (svg.match(/<svg\b/g) ?? []).length;
+}
+
+function attributesFor(tag) {
+  const attributes = new Map();
+  for (const match of tag.matchAll(/([:\w-]+)\s*=\s*"([^"]*)"/g)) {
+    attributes.set(match[1], match[2]);
+  }
+  return attributes;
+}
+
+function numericAttribute(attributes, name, fallback) {
+  const raw = attributes.get(name);
+  if (raw === undefined) {
+    return fallback;
+  }
+  const value = Number.parseFloat(raw);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+// Qt SVG only supports SVG Tiny 1.2 and silently skips nested <svg> elements.
+// MathJax emits nested <svg> for some stretchy constructs, so rewrite each
+// inner one into an equivalent <g> with the viewBox baked into a transform.
+function flattenNestedSvg(svg) {
+  const nestedSvgPattern = /<svg\b([^>]*)>((?:(?!<svg\b|<\/svg>).)*?)<\/svg>/gs;
+  let flattened = svg;
+  while (countSvgTags(flattened) > 1) {
+    const next = flattened.replace(nestedSvgPattern, (match, rawAttributes, inner) => {
+      if (match === flattened) {
+        return match;
+      }
+      const attributes = attributesFor(rawAttributes);
+      const x = numericAttribute(attributes, 'x', 0);
+      const y = numericAttribute(attributes, 'y', 0);
+      let transform = `translate(${x},${y})`;
+
+      const viewBox = attributes.get('viewBox');
+      if (viewBox) {
+        const parts = viewBox.trim().split(/[\s,]+/).map(Number);
+        const width = numericAttribute(attributes, 'width', Number.NaN);
+        const height = numericAttribute(attributes, 'height', Number.NaN);
+        if (parts.length === 4
+            && parts.every(Number.isFinite)
+            && Number.isFinite(width)
+            && Number.isFinite(height)
+            && parts[2] !== 0
+            && parts[3] !== 0) {
+          transform += ` scale(${width / parts[2]},${height / parts[3]}) translate(${-parts[0]},${-parts[1]})`;
+        }
+      }
+
+      return `<g transform="${transform}">${inner}</g>`;
+    });
+    if (next === flattened) {
+      break;
+    }
+    flattened = next;
+  }
+  return flattened;
+}
+
 function extractSvg(containerNode) {
   for (const child of adaptor.childNodes(containerNode)) {
     if (adaptor.kind(child) === "svg") {
-      return adaptor.serializeXML(child);
+      const xml = adaptor.serializeXML(child);
+      const match = xml.match(/<svg[\s\S]*<\/svg>/);
+      // Invisible glyphs (function application, nbsp) serialize as <path d=""/>.
+      // Qt logs "Invalid path data" for them; they paint nothing, so drop them.
+      return flattenNestedSvg(match ? match[0] : xml)
+        .replace(/<path\b[^>]*\bd=""[^>]*>/g, "");
     }
   }
   return adaptor.innerHTML(containerNode);
