@@ -20,12 +20,12 @@ The product roadmap is in `large-markdown-editor-technical-solution-and-roadmap.
 - Renderer: project-owned AST-to-`QTextDocument` rendering for headings, inline styles, code, quotes, lists, links, images, tables, and thematic breaks.
 - Safety: raw HTML is displayed as text, remote images are not downloaded, and unsafe link schemes are not made clickable.
 - Large documents retain the existing windowed preview path instead of parsing the full editor buffer on every refresh.
-- Math expressions use MathJax 4.1.3 to convert TeX to SVG, then QtSvg rasterizes the SVG into `QTextDocument` image resources. If Node.js, the helper script, or MathJax is unavailable, formulas fall back to visible styled source.
+- Math expressions use a bundled MathJax SVG renderer running inside embedded QuickJS, then QtSvg rasterizes the SVG into `QTextDocument` image resources. If the bundle cannot initialize or a formula cannot render, formulas fall back to visible styled source.
 - Mermaid diagram rendering is deferred. WebEngine, Marked.js, and QWebChannel are not part of the current preview path.
 - The GUI writes a local `loomark.log` under the operating system app data location. Users can open the directory from `帮助 -> 打开日志目录` when reporting startup, rendering, or update-check issues.
 - On startup, and from `帮助 -> 检查更新`, the GUI checks the latest GitHub Release at `https://github.com/cmx-star/Loomark/releases`. If a newer version exists, it opens the platform release asset download or the release page after user confirmation.
 
-`md4qt` is acquired with CMake `FetchContent`. The first configure needs network access to the official KDE repository; subsequent builds can reuse the populated `build/<preset>/_deps` cache. MathJax is acquired with npm; packaging copies only the trimmed MathJax files needed for TeX-to-SVG preview. macOS and Windows packages also include the Node.js executable used by the helper so formulas render when the app is launched outside a developer shell. The Linux `.deb` declares `nodejs` as a package dependency.
+`md4qt` and QuickJS are acquired with CMake `FetchContent`. The first configure needs network access to the official upstream archives; subsequent builds can reuse the populated `build/<preset>/_deps` cache. MathJax is acquired with npm and bundled into a single QuickJS script during the build, so release packages do not require users to install Node.js.
 
 ## Build after CMake is installed
 

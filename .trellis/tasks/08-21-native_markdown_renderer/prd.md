@@ -15,10 +15,10 @@
 
 - R1：引入官方 `md4qt` 静态 C++ 解析库，固定到声明版本 `5.1.3` 的提交 `1a878810adeeb534de4de395f4951edd54ab6072`。
 - R2：新增独立的原生 Markdown 渲染模块，将 `md4qt` AST 写入调用方提供的 `QTextDocument`，GUI 不直接遍历第三方 AST。
-- R3：主预览不得调用 `QTextBrowser::setMarkdown()`，不得生成 HTML 后交给 WebView，也不得新增 WebEngine；用户已批准引入 MathJax/Node helper 仅用于 TeX 到 SVG 的公式转换。
+- R3：主预览不得调用 `QTextBrowser::setMarkdown()`，不得生成 HTML 后交给 WebView，也不得新增 WebEngine；用户已批准引入 MathJax/QuickJS 仅用于 TeX 到 SVG 的公式转换。
 - R4：首版原生渲染至少覆盖标题、段落、粗体、斜体、删除线、软/硬换行、行内代码、围栏代码块、引用、无序/有序/任务列表、链接、图片、表格和水平分隔线。
 - R5：原始 HTML 不执行，按可读纯文本处理；链接点击继续沿用 `QTextBrowser` 的外部链接行为。
-- R6：数学 AST 使用 MathJax 4.1.3 将 TeX 转成 SVG，再由 QtSvg rasterize 后嵌入 `QTextDocument`；转换失败时保留可读源码降级。
+- R6：数学 AST 使用打包后的 MathJax bundle 在嵌入式 QuickJS 中将 TeX 转成 SVG，再由 QtSvg rasterize 后嵌入 `QTextDocument`；转换失败时保留可读源码降级。
 - R7：保留现有 60 ms 防抖、完整/窗口化预览阈值、滚动同步提示和打开/编辑/保存行为。
 - R8：README 记录新预览架构、固定依赖、首次配置需要联网、WebEngine 不在当前路线中，以及 Mermaid 为后续事项。
 - R9：保留工作区现有未提交 GUI、主题和 Trellis 变更，不回退或重写无关内容。

@@ -5,10 +5,6 @@
 #include <QColor>
 #include <QFileInfo>
 #include <QImage>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QProcess>
-#include <QStandardPaths>
 #include <QTextBlock>
 #include <QTextBrowser>
 #include <QTextDocument>
@@ -40,58 +36,12 @@ void require(bool condition, const char* message)
 
 QString mathJaxDiagnostic()
 {
-    QString nodePath = qEnvironmentVariable("MQT_NODE");
-    if (nodePath.isEmpty()) {
-        nodePath = QStandardPaths::findExecutable(QStringLiteral("node"));
-    }
-#ifdef Q_OS_WIN
-    if (nodePath.isEmpty()) {
-        nodePath = QStandardPaths::findExecutable(QStringLiteral("node.exe"));
-    }
-#endif
-
-    const QString scriptPath = qEnvironmentVariable("MQT_MATHJAX_SCRIPT");
+    const QString bundlePath = qEnvironmentVariable("MQT_MATHJAX_BUNDLE");
     QString report;
     QTextStream stream(&report);
-    stream << "MQT_NODE=" << qEnvironmentVariable("MQT_NODE")
-           << " exists=" << QFileInfo::exists(qEnvironmentVariable("MQT_NODE")) << '\n';
-    stream << "resolved node=" << nodePath
-           << " exists=" << QFileInfo::exists(nodePath) << '\n';
-    stream << "MQT_MATHJAX_SCRIPT=" << scriptPath
-           << " exists=" << QFileInfo::exists(scriptPath) << '\n';
-
-    if (nodePath.isEmpty() || scriptPath.isEmpty()) {
-        return report;
-    }
-
-    QJsonObject request;
-    request.insert(QStringLiteral("tex"), QStringLiteral("x^2 + y^2"));
-    request.insert(QStringLiteral("display"), false);
-
-    QProcess process;
-    process.setProgram(nodePath);
-    process.setArguments({scriptPath});
-    process.setWorkingDirectory(QFileInfo(scriptPath).absolutePath());
-    process.start();
-    if (!process.waitForStarted(4000)) {
-        stream << "helper start failed: " << process.errorString() << '\n';
-        return report;
-    }
-    process.write(QJsonDocument(request).toJson(QJsonDocument::Compact));
-    process.closeWriteChannel();
-    if (!process.waitForFinished(4000)) {
-        stream << "helper timed out: " << process.errorString() << '\n';
-        process.kill();
-        process.waitForFinished();
-        return report;
-    }
-
-    const QByteArray stdoutData = process.readAllStandardOutput();
-    const QByteArray stderrData = process.readAllStandardError();
-    stream << "helper exitStatus=" << process.exitStatus()
-           << " exitCode=" << process.exitCode() << '\n';
-    stream << "helper stdout=" << QString::fromUtf8(stdoutData.left(500)) << '\n';
-    stream << "helper stderr=" << QString::fromUtf8(stderrData.left(500)) << '\n';
+    stream << "MQT_MATHJAX_BUNDLE=" << bundlePath
+           << " exists=" << QFileInfo::exists(bundlePath)
+           << " size=" << QFileInfo(bundlePath).size() << '\n';
     return report;
 }
 

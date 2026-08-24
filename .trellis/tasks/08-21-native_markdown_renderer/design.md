@@ -7,10 +7,10 @@
 - 固定版本：提交 `1a878810adeeb534de4de395f4951edd54ab6072`，避免跟随 `master` 漂移。
 - 接入：CMake `FetchContent`；关闭 `BUILD_MD4QT_TESTS`、benchmark、工具和安装目标，只链接 `md4qt::md4qt`。
 - 公式渲染依赖：npm `mathjax` 4.1.3，Apache-2.0 许可证；用户批准后接入。
-- 公式显示接入：Node helper 调用 MathJax 将 TeX 转 SVG，C++ 侧通过 QtSvg `QSvgRenderer` rasterize 成 `QImage` 并以 `QTextDocument::ImageResource` 嵌入，主预览不使用 WebEngine。
-- 安装命令：首次公式预览构建前运行 `npm install`；首次执行 `cmake --preset macos-debug` 时由 CMake 获取固定 `md4qt` 提交。
+- 公式显示接入：构建期用 `esbuild` 将 MathJax 打成单个 browser/IIFE bundle，运行时在嵌入式 QuickJS 中执行并将 TeX 转 SVG，C++ 侧通过 QtSvg `QSvgRenderer` rasterize 成 `QImage` 并以 `QTextDocument::ImageResource` 嵌入，主预览不使用 WebEngine。
+- 安装命令：首次公式预览构建前运行 `npm install`；首次执行 `cmake --preset macos-debug` 时由 CMake 获取固定 `md4qt` 提交和固定 `quickjs-ng` 提交。
 
-选择 `FetchContent` 是因为当前 Homebrew 没有 `md4qt` formula，上游也没有 Git tag。相比复制数十个上游源文件或增加 Git submodule，这种方式改动较小且提交固定；代价是首次配置需要访问上游仓库，离线全新构建需要预先填充 CMake FetchContent 缓存。MathJax 通过 `package-lock.json` 锁定 npm 解析版本，macOS bundle 会复制 helper、`node_modules` 和许可证；运行环境缺少 Node 或转换失败时退回源码文本。
+选择 `FetchContent` 是因为当前 Homebrew 没有 `md4qt` formula，上游也没有 Git tag。相比复制数十个上游源文件或增加 Git submodule，这种方式改动较小且提交固定；代价是首次配置需要访问上游仓库，离线全新构建需要预先填充 CMake FetchContent 缓存。MathJax 通过 `package-lock.json` 锁定 npm 解析版本，发布包只复制生成后的 `mathjax_bundle.js` 和许可证；运行环境不需要 Node，QuickJS 初始化或转换失败时退回源码文本。
 
 ## 模块边界
 
@@ -30,7 +30,7 @@
 - 行内元素：粗体、斜体、删除线、代码、链接通过嵌套 `QTextCharFormat` 合并。
 - 图片：保留 URL/相对路径并使用文档基准 URL；首版不新增网络下载器。
 - 任务列表：使用 Unicode 复选框前缀并保留列表层级，不新增交互状态。
-- 数学：优先用 MathJax 渲染 TeX SVG 并嵌入图片资源；超时、缺少 Node/MathJax 或 SVG 无法 rasterize 时，保留表达式源码并应用区别于正文的样式。
+- 数学：优先用嵌入式 QuickJS 内的 MathJax bundle 渲染 TeX SVG 并嵌入图片资源；bundle 缺失、QuickJS 初始化失败、转换失败或 SVG 无法 rasterize 时，保留表达式源码并应用区别于正文的样式。
 - Mermaid：代码围栏仍按代码块展示，README 明确后续再增加图形渲染。
 
 ## 大文件兼容

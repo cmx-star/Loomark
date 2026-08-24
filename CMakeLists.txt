@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.25)
 project(markdown_qt
     VERSION 0.1.0
     DESCRIPTION "Native large-file Markdown editor P0 prototype"
-    LANGUAGES CXX
+    LANGUAGES C CXX
 )
 
 include(GNUInstallDirs)
@@ -32,6 +32,62 @@ FetchContent_Declare(md4qt
 )
 
 FetchContent_MakeAvailable(md4qt)
+
+FetchContent_Declare(quickjs
+    GIT_REPOSITORY https://github.com/quickjs-ng/quickjs.git
+    GIT_TAG af0a40d94424476ce9365e881848af4c030517ec
+)
+
+FetchContent_GetProperties(quickjs)
+if(NOT quickjs_POPULATED)
+    cmake_policy(PUSH)
+    if(POLICY CMP0169)
+        cmake_policy(SET CMP0169 OLD)
+    endif()
+    FetchContent_Populate(quickjs)
+    cmake_policy(POP)
+endif()
+
+add_library(qjs STATIC
+    "${quickjs_SOURCE_DIR}/dtoa.c"
+    "${quickjs_SOURCE_DIR}/libregexp.c"
+    "${quickjs_SOURCE_DIR}/libunicode.c"
+    "${quickjs_SOURCE_DIR}/quickjs.c"
+)
+
+target_include_directories(qjs
+    PUBLIC
+        "${quickjs_SOURCE_DIR}"
+)
+
+target_compile_definitions(qjs
+    PRIVATE
+        QUICKJS_NG_BUILD
+        _GNU_SOURCE
+)
+
+if(WIN32)
+    target_compile_definitions(qjs
+        PRIVATE
+            WIN32_LEAN_AND_MEAN
+            _WIN32_WINNT=0x0601
+    )
+endif()
+
+set_target_properties(qjs PROPERTIES C_STANDARD 11)
+set_target_properties(qjs PROPERTIES AUTOMOC OFF)
+
+if(MSVC)
+    target_compile_options(qjs PRIVATE /experimental:c11atomics /wd4018 /wd4100 /wd4244 /wd4267 /wd4996)
+else()
+    target_compile_options(qjs PRIVATE -w)
+endif()
+
+find_package(Threads)
+target_link_libraries(qjs PUBLIC Threads::Threads)
+if(NOT WIN32)
+    target_link_libraries(qjs PUBLIC ${CMAKE_DL_LIBS} m)
+endif()
 
 target_include_directories(md4qt
     BEFORE PUBLIC
@@ -67,31 +123,38 @@ if(DEFINED ENV{GITHUB_REF_NAME})
     endif()
 endif()
 
-set(MATHJAX_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/tools/mathjax_svg.mjs")
-set(MATHJAX_NODE_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/node_modules")
-option(MQT_BUNDLE_MATHJAX_RUNTIME "Bundle the local MathJax node_modules runtime into the app." OFF)
-if(NOT EXISTS "${MATHJAX_NODE_MODULES}/mathjax")
+set(MATHJAX_BUNDLE_ENTRY "${CMAKE_CURRENT_SOURCE_DIR}/tools/quickjax_renderer/index.js")
+set(MATHJAX_QUICKJS_BUNDLE_DIR "${CMAKE_CURRENT_BINARY_DIR}/mathjax-runtime")
+set(MATHJAX_QUICKJS_BUNDLE "${MATHJAX_QUICKJS_BUNDLE_DIR}/mathjax_bundle.js")
+option(MQT_BUNDLE_MATHJAX_RUNTIME "Bundle the local MathJax QuickJS runtime into the app." OFF)
+find_program(MQT_NPM_EXECUTABLE NAMES npm npm.cmd)
+if(NOT MQT_NPM_EXECUTABLE)
+    message(FATAL_ERROR "npm was not found. Run `npm install` with Node.js before building formula preview support.")
+endif()
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/mathjax-full")
     message(FATAL_ERROR "MathJax npm dependency is missing. Run `npm install` before configuring formula preview support.")
 endif()
-find_program(MQT_NODE_EXECUTABLE NAMES node)
 
-set(MATHJAX_RUNTIME_MATHJAX_FILES
-    "${MATHJAX_NODE_MODULES}/mathjax/package.json"
-    "${MATHJAX_NODE_MODULES}/mathjax/LICENSE"
-    "${MATHJAX_NODE_MODULES}/mathjax/node-main.mjs"
-    "${MATHJAX_NODE_MODULES}/mathjax/node-main.js"
-    "${MATHJAX_NODE_MODULES}/mathjax/node-main-setup.cjs"
+add_custom_command(
+    OUTPUT "${MATHJAX_QUICKJS_BUNDLE}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${MATHJAX_QUICKJS_BUNDLE_DIR}"
+    COMMAND ${MQT_NPM_EXECUTABLE} exec -- esbuild
+        "${MATHJAX_BUNDLE_ENTRY}"
+        --bundle
+        --minify
+        --platform=browser
+        --format=iife
+        "--outfile=${MATHJAX_QUICKJS_BUNDLE}"
+    DEPENDS
+        "${MATHJAX_BUNDLE_ENTRY}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/package.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/package-lock.json"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    VERBATIM
 )
-set(MATHJAX_RUNTIME_INPUT_DIR "${MATHJAX_NODE_MODULES}/mathjax/input")
-set(MATHJAX_RUNTIME_OUTPUT_DIR "${MATHJAX_NODE_MODULES}/mathjax/output")
-set(MATHJAX_RUNTIME_ADAPTORS_DIR "${MATHJAX_NODE_MODULES}/mathjax/adaptors")
-set(MATHJAX_RUNTIME_FONT_FILES
-    "${MATHJAX_NODE_MODULES}/@mathjax/mathjax-newcm-font/package.json"
-    "${MATHJAX_NODE_MODULES}/@mathjax/mathjax-newcm-font/svg.js"
+add_custom_target(mathjax_quickjs_bundle
+    DEPENDS "${MATHJAX_QUICKJS_BUNDLE}"
 )
-set(MATHJAX_RUNTIME_FONT_SVG_DYNAMIC_DIR "${MATHJAX_NODE_MODULES}/@mathjax/mathjax-newcm-font/svg/dynamic")
-set(MATHJAX_TEST_RUNTIME_DIR "${CMAKE_CURRENT_BINARY_DIR}/mathjax-runtime")
-set(MATHJAX_TEST_RUNTIME_STAMP "${MATHJAX_TEST_RUNTIME_DIR}/.stamp")
 
 add_executable(markdown_qt_p0
     src/cli/main.cpp
@@ -128,6 +191,7 @@ target_link_libraries(markdown_qt_gui
     PRIVATE
         markdown_qt_core
         md4qt::md4qt
+        qjs
         Qt6::Network
         Qt6::Widgets
         Qt6::Svg
@@ -148,12 +212,7 @@ if(WIN32)
             OUTPUT_NAME "Loomark"
     )
 endif()
-if(MQT_NODE_EXECUTABLE)
-    target_compile_definitions(markdown_qt_gui
-        PRIVATE
-            "MQT_CONFIGURED_NODE_EXECUTABLE=\"${MQT_NODE_EXECUTABLE}\""
-    )
-endif()
+add_dependencies(markdown_qt_gui mathjax_quickjs_bundle)
 
 if(APPLE)
     set_target_properties(markdown_qt_gui
@@ -172,51 +231,16 @@ if(APPLE)
             "${md4qt_SOURCE_DIR}/LICENSES/MIT.txt"
             "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/licenses/md4qt-MIT.txt"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${MATHJAX_SCRIPT}"
-            "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/mathjax_svg.mjs"
+            "${quickjs_SOURCE_DIR}/LICENSE"
+            "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/licenses/quickjs-MIT.txt"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${MATHJAX_NODE_MODULES}/mathjax/LICENSE"
+            "${CMAKE_CURRENT_SOURCE_DIR}/node_modules/mathjax-full/LICENSE"
             "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/licenses/mathjax-Apache-2.0.txt"
-        COMMAND ${CMAKE_COMMAND} -E remove_directory
-            "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${MATHJAX_QUICKJS_BUNDLE}"
+            "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/mathjax_bundle.js"
         VERBATIM
     )
-    if(MQT_BUNDLE_MATHJAX_RUNTIME)
-        add_custom_command(TARGET markdown_qt_gui POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory
-                "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules/mathjax"
-                "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules/@mathjax/mathjax-newcm-font"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${MATHJAX_RUNTIME_MATHJAX_FILES}
-                "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules/mathjax"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${MATHJAX_RUNTIME_INPUT_DIR}"
-                "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules/mathjax/input"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${MATHJAX_RUNTIME_OUTPUT_DIR}"
-                "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules/mathjax/output"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${MATHJAX_RUNTIME_ADAPTORS_DIR}"
-                "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules/mathjax/adaptors"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${MATHJAX_RUNTIME_FONT_FILES}
-                "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules/@mathjax/mathjax-newcm-font"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${MATHJAX_RUNTIME_FONT_SVG_DYNAMIC_DIR}"
-                "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node_modules/@mathjax/mathjax-newcm-font/svg/dynamic"
-            VERBATIM
-        )
-        if(MQT_NODE_EXECUTABLE)
-            add_custom_command(TARGET markdown_qt_gui POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${MQT_NODE_EXECUTABLE}"
-                    "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node"
-                COMMAND chmod +x
-                    "$<TARGET_BUNDLE_CONTENT_DIR:markdown_qt_gui>/Resources/node"
-                VERBATIM
-            )
-        endif()
-    endif()
 endif()
 
 install(TARGETS markdown_qt_p0 markdown_qt_gui
@@ -225,30 +249,7 @@ install(TARGETS markdown_qt_p0 markdown_qt_gui
 )
 
 if(NOT APPLE)
-    install(FILES tools/mathjax_svg.mjs DESTINATION ${CMAKE_INSTALL_BINDIR})
-    if(MQT_BUNDLE_MATHJAX_RUNTIME)
-        if(WIN32 AND MQT_NODE_EXECUTABLE)
-            install(PROGRAMS ${MQT_NODE_EXECUTABLE} DESTINATION ${CMAKE_INSTALL_BINDIR})
-        endif()
-        install(FILES ${MATHJAX_RUNTIME_MATHJAX_FILES}
-            DESTINATION ${CMAKE_INSTALL_BINDIR}/node_modules/mathjax
-        )
-        install(DIRECTORY "${MATHJAX_RUNTIME_INPUT_DIR}/"
-            DESTINATION ${CMAKE_INSTALL_BINDIR}/node_modules/mathjax/input
-        )
-        install(DIRECTORY "${MATHJAX_RUNTIME_OUTPUT_DIR}/"
-            DESTINATION ${CMAKE_INSTALL_BINDIR}/node_modules/mathjax/output
-        )
-        install(DIRECTORY "${MATHJAX_RUNTIME_ADAPTORS_DIR}/"
-            DESTINATION ${CMAKE_INSTALL_BINDIR}/node_modules/mathjax/adaptors
-        )
-        install(FILES ${MATHJAX_RUNTIME_FONT_FILES}
-            DESTINATION ${CMAKE_INSTALL_BINDIR}/node_modules/@mathjax/mathjax-newcm-font
-        )
-        install(DIRECTORY "${MATHJAX_RUNTIME_FONT_SVG_DYNAMIC_DIR}/"
-            DESTINATION ${CMAKE_INSTALL_BINDIR}/node_modules/@mathjax/mathjax-newcm-font/svg/dynamic
-        )
-    endif()
+    install(FILES "${MATHJAX_QUICKJS_BUNDLE}" DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 enable_testing()
 
@@ -271,6 +272,7 @@ add_executable(markdown_qt_markdown_renderer_tests
 target_link_libraries(markdown_qt_markdown_renderer_tests
     PRIVATE
         md4qt::md4qt
+        qjs
         Qt6::Widgets
         Qt6::Svg
 )
@@ -284,54 +286,7 @@ target_compile_options(markdown_qt_markdown_renderer_tests
     PRIVATE
         $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
 )
-if(MQT_NODE_EXECUTABLE)
-    target_compile_definitions(markdown_qt_markdown_renderer_tests
-        PRIVATE
-            "MQT_CONFIGURED_NODE_EXECUTABLE=\"${MQT_NODE_EXECUTABLE}\""
-    )
-endif()
-
-add_custom_command(
-    OUTPUT "${MATHJAX_TEST_RUNTIME_STAMP}"
-    COMMAND ${CMAKE_COMMAND} -E remove_directory
-        "${MATHJAX_TEST_RUNTIME_DIR}"
-    COMMAND ${CMAKE_COMMAND} -E make_directory
-        "${MATHJAX_TEST_RUNTIME_DIR}/node_modules/mathjax"
-        "${MATHJAX_TEST_RUNTIME_DIR}/node_modules/@mathjax/mathjax-newcm-font"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${MATHJAX_SCRIPT}"
-        "${MATHJAX_TEST_RUNTIME_DIR}/mathjax_svg.mjs"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${MATHJAX_RUNTIME_MATHJAX_FILES}
-        "${MATHJAX_TEST_RUNTIME_DIR}/node_modules/mathjax"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${MATHJAX_RUNTIME_INPUT_DIR}"
-        "${MATHJAX_TEST_RUNTIME_DIR}/node_modules/mathjax/input"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${MATHJAX_RUNTIME_OUTPUT_DIR}"
-        "${MATHJAX_TEST_RUNTIME_DIR}/node_modules/mathjax/output"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${MATHJAX_RUNTIME_ADAPTORS_DIR}"
-        "${MATHJAX_TEST_RUNTIME_DIR}/node_modules/mathjax/adaptors"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${MATHJAX_RUNTIME_FONT_FILES}
-        "${MATHJAX_TEST_RUNTIME_DIR}/node_modules/@mathjax/mathjax-newcm-font"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${MATHJAX_RUNTIME_FONT_SVG_DYNAMIC_DIR}"
-        "${MATHJAX_TEST_RUNTIME_DIR}/node_modules/@mathjax/mathjax-newcm-font/svg/dynamic"
-    COMMAND ${CMAKE_COMMAND} -E touch
-        "${MATHJAX_TEST_RUNTIME_STAMP}"
-    DEPENDS
-        "${MATHJAX_SCRIPT}"
-        ${MATHJAX_RUNTIME_MATHJAX_FILES}
-        ${MATHJAX_RUNTIME_FONT_FILES}
-        "${MATHJAX_RUNTIME_FONT_SVG_DYNAMIC_DIR}"
-    VERBATIM
-)
-add_custom_target(markdown_renderer_test_mathjax_runtime
-    DEPENDS "${MATHJAX_TEST_RUNTIME_STAMP}"
-)
-add_dependencies(markdown_qt_markdown_renderer_tests markdown_renderer_test_mathjax_runtime)
+add_dependencies(markdown_qt_markdown_renderer_tests mathjax_quickjs_bundle)
 
 add_test(NAME markdown_qt_markdown_renderer_tests COMMAND markdown_qt_markdown_renderer_tests)
 
@@ -357,10 +312,7 @@ target_compile_options(markdown_qt_update_checker_tests
 )
 
 add_test(NAME markdown_qt_update_checker_tests COMMAND markdown_qt_update_checker_tests)
-set(MARKDOWN_RENDERER_TEST_ENV "MQT_MATHJAX_SCRIPT=${MATHJAX_TEST_RUNTIME_DIR}/mathjax_svg.mjs")
-if(MQT_NODE_EXECUTABLE)
-    list(APPEND MARKDOWN_RENDERER_TEST_ENV "MQT_NODE=${MQT_NODE_EXECUTABLE}")
-endif()
+set(MARKDOWN_RENDERER_TEST_ENV "MQT_MATHJAX_BUNDLE=${MATHJAX_QUICKJS_BUNDLE}")
 set_tests_properties(markdown_qt_markdown_renderer_tests
     PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"

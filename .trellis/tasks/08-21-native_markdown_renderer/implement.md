@@ -7,7 +7,7 @@
 - `src/gui/markdown_document_renderer.cpp`
 - `src/gui/main_window.h`
 - `src/gui/main_window.cpp`
-- `tools/mathjax_svg.mjs`
+- `tools/quickjax_renderer/index.js`
 - `package.json`
 - `package-lock.json`
 - `tests/markdown_document_renderer_tests.cpp`
@@ -18,7 +18,7 @@
 
 ## 不变量
 
-- 不引入 WebEngine、Scintilla/QScintilla；用户已批准 MathJax/Node helper 仅用于公式 SVG 转换。
+- 不引入 WebEngine、Scintilla/QScintilla；用户已批准 MathJax/QuickJS 仅用于公式 SVG 转换。
 - 不修改文件格式、原子保存语义和 CLI 行为。
 - 不回退现有未提交 GUI、主题、CMake preset 和 Trellis 改动。
 - 不执行提交、分支切换、推送或发布。

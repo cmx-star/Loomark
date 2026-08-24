@@ -180,15 +180,18 @@ jobs:
               "$package_dir/Loomark.app/Contents/Frameworks/QtSvg.framework" \
               "$package_dir/Loomark.app/Contents/PlugIns/platforms/libqcocoa.dylib" \
               "$package_dir/Loomark.app/Contents/PlugIns/tls/libqsecuretransportbackend.dylib" \
-              "$package_dir/Loomark.app/Contents/Resources/node" \
-              "$package_dir/Loomark.app/Contents/Resources/node_modules/mathjax/input/tex.js"
+              "$package_dir/Loomark.app/Contents/Resources/mathjax_bundle.js"
             do
               if [ ! -e "$path" ]; then
                 echo "macOS package is missing $path"
                 exit 1
               fi
             done
-            "$package_dir/Loomark.app/Contents/Resources/node" --version
+            if [ -e "$package_dir/Loomark.app/Contents/Resources/node" ] ||
+              [ -e "$package_dir/Loomark.app/Contents/Resources/node_modules" ]; then
+              echo "macOS package should not include the Node runtime."
+              exit 1
+            fi
             dmg_root="$PWD/dmg-root"
             rm -rf "$dmg_root"
             mkdir -p "$dmg_root"
@@ -248,7 +251,7 @@ jobs:
               'Priority: optional' \
               "Architecture: $package_arch" \
               'Maintainer: Loomark Maintainers <noreply@example.com>' \
-              'Depends: libc6, libstdc++6, libgcc-s1, libgl1, libqt6core6t64 | libqt6core6, libqt6gui6, libqt6network6t64 | libqt6network6, libqt6widgets6, libqt6svg6, nodejs' \
+              'Depends: libc6, libstdc++6, libgcc-s1, libgl1, libqt6core6t64 | libqt6core6, libqt6gui6, libqt6network6t64 | libqt6network6, libqt6widgets6, libqt6svg6' \
               'Description: Native large-file Markdown editor prototype' \
               ' Loomark is a native Qt Markdown editor prototype with local editing and preview.' \
               > "$package_dir/DEBIAN/control"
@@ -287,8 +290,7 @@ jobs:
             'bin\Qt6Svg.dll',
             'bin\platforms\qwindows.dll',
             'bin\tls\qschannelbackend.dll',
-            'bin\node.exe',
-            'bin\node_modules\mathjax\input\tex.js'
+            'bin\mathjax_bundle.js'
           )
           foreach ($path in $requiredPaths) {
             $fullPath = Join-Path $packageDir $path
@@ -296,6 +298,11 @@ jobs:
               Write-Error "Windows package is missing $path"
               exit 1
             }
+          }
+          if ((Test-Path (Join-Path $packageDir 'bin\node.exe')) -or
+              (Test-Path (Join-Path $packageDir 'bin\node_modules'))) {
+            Write-Error "Windows package should not include the Node runtime."
+            exit 1
           }
 
           $packageVersion = if ($env:GITHUB_REF_NAME -like 'v*') { $env:GITHUB_REF_NAME.Substring(1) } else { '0.1.0-ci' }
