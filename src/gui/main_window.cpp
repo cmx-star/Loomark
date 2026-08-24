@@ -996,6 +996,8 @@ void MainWindow::jumpToWindowStart(std::uint64_t rawStart)
     dirty_ = false;
     updateWindowState();
     updateStatusBar();
+    statusBar()->showMessage(
+        QStringLiteral("已加载窗口：字节 %1 – %2").arg(windowStart_).arg(windowEnd_), 3000);
     refreshPreview();
 }
 
@@ -1179,12 +1181,11 @@ void MainWindow::ensureDiskSpace(const std::filesystem::path& path, std::uint64_
     const std::uint64_t required = neededBytes > (kMax - kMargin) / 2 ? kMax : neededBytes * 2 + kMargin;
     const auto available = mqt::core::availableDiskBytes(path);
     if (available < required) {
-        throw std::runtime_error(
-            "not enough free disk space to save safely: need about "
-            + std::to_string(required / (1024ULL * 1024ULL))
-            + " MiB, but only "
-            + std::to_string(available / (1024ULL * 1024ULL))
-            + " MiB available");
+        const QString message = QStringLiteral(
+            "磁盘可用空间不足，无法安全保存：本次约需 %1 MiB，当前仅剩 %2 MiB。")
+            .arg(qlonglong(required / (1ULL << 20)))
+            .arg(qlonglong(available / (1ULL << 20)));
+        throw std::runtime_error(message.toStdString());
     }
 }
 
