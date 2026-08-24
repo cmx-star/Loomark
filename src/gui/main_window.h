@@ -8,12 +8,14 @@
 
 class QAction;
 class QLabel;
+class QMenu;
 class QPlainTextEdit;
 class QTextBrowser;
 class QTimer;
 
 namespace mqt::gui {
 
+class PreviewIndexThread;
 class UpdateChecker;
 
 class MainWindow final : public QMainWindow {
@@ -43,11 +45,34 @@ private:
     void updateStatusBar();
     void setCurrentPath(std::filesystem::path path, const mqt::core::FileInfo& info);
 
+    // Large-file (windowed) support.
+    [[nodiscard]] bool windowed() const;
+    void applyTierUiMode();
+    bool loadIntoEditor(const std::string& raw);
+    bool readWindow(std::uint64_t rawStart);
+    void jumpToWindowStart(std::uint64_t rawStart);
+    void jumpToFirstWindow();
+    void jumpToPreviousWindow();
+    void jumpToNextWindow();
+    void jumpToLastWindow();
+    void jumpToPositionDialog();
+    void requestIndexedPreview();
+    void launchIndexThread(std::uint64_t generation);
+    void applyIndexedPreviewResult(const PreviewIndexThread& thread);
+    void ensureDiskSpace(const std::filesystem::path& path, std::uint64_t neededBytes) const;
+
     std::filesystem::path currentPath_;
     mqt::core::FileInfo currentInfo_{};
     bool dirty_ = false;
     int previewStartLine_ = 1;
     int previewEndLine_ = 1;
+    bool largeMode_ = false;
+    std::uint64_t windowStart_ = 0;
+    std::uint64_t windowEnd_ = 0;
+    std::uint64_t previewGeneration_ = 0;
+    bool indexedPreviewPending_ = false;
+    PreviewIndexThread* indexThread_ = nullptr;
+    QMenu* windowMenu_ = nullptr;
 
     QPlainTextEdit* editor_ = nullptr;
     QTextBrowser* preview_ = nullptr;

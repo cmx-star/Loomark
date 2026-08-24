@@ -2,6 +2,7 @@
 
 #include "gui/application_logger.h"
 #include "gui/markdown_document_renderer.h"
+#include "gui/preview_index_worker.h"
 #include "gui/update_checker.h"
 
 #include "core/file_tier.h"
@@ -18,7 +19,9 @@
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QIcon>
+#include <QInputDialog>
 #include <QLabel>
+#include <QMenu>
 #include <QMessageBox>
 #include <QMenuBar>
 #include <QKeySequence>
@@ -46,6 +49,7 @@
 #include <exception>
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -55,6 +59,8 @@ namespace {
 
 constexpr int kFullPreviewCharLimit = 256 * 1024;
 constexpr int kLargePreviewCharLimit = 128 * 1024;
+constexpr std::uint64_t kWindowBytes = 2ULL * 1024ULL * 1024ULL;
+constexpr int kMaxIndexedPreviewChars = 192 * 1024;
 
 class MarkdownEditor final : public QPlainTextEdit {
 public:
@@ -162,6 +168,39 @@ QString compactPath(const std::filesystem::path& path)
 std::string bomPrefix()
 {
     return std::string("\xEF\xBB\xBF", 3);
+}
+
+// Returns a cut position <= data.size() that does not split a UTF-8
+// multi-byte sequence at the end of the buffer.
+std::size_t alignUtf8Cut(const std::string& data)
+{
+    if (data.empty()) {
+        return 0;
+    }
+    std::size_t cut = data.size();
+    std::size_t scanned = 0;
+    const std::size_t limit = std::min<std::size_t>(3, cut);
+    while (scanned < limit) {
+        const auto ch = static_cast<unsigned char>(data[cut - 1]);
+        if ((ch & 0xC0) == 0x80) { // continuation byte inside a split sequence
+            --cut;
+            ++scanned;
+            continue;
+        }
+        std::size_t seqLen = 1;
+        if ((ch & 0xE0) == 0xC0) {
+            seqLen = 2;
+        } else if ((ch & 0xF0) == 0xE0) {
+            seqLen = 3;
+        } else if ((ch & 0xF8) == 0xF0) {
+            seqLen = 4;
+        }
+        if (seqLen > scanned + 1) {
+            --cut; // trailing lead byte whose sequence is incomplete
+        }
+        break;
+    }
+    return cut;
 }
 
 QFont interfaceFont(int pointSize = 13)
@@ -298,7 +337,7 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
         dirty_ = true;
         updateWindowState();
         updateStatusBar();
-        if (previewTimer_) {
+        if (previewTimer_ && !largeMode_) {
             previewTimer_->start();
         }
     });
@@ -318,6 +357,24 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
     fileMenu->addAction(quitAction);
     helpMenu->addAction(checkUpdatesAction_);
     helpMenu->addAction(openLogDirectoryAction);
+
+    windowMenu_ = menuBar()->addMenu(QStringLiteral("窗口"));
+    auto* winFirstAction = new QAction(QStringLiteral("跳到文件开头"), this);
+    auto* winPrevAction = new QAction(QStringLiteral("上一窗口"), this);
+    auto* winNextAction = new QAction(QStringLiteral("下一窗口"), this);
+    auto* winLastAction = new QAction(QStringLiteral("跳到文件末尾"), this);
+    auto* winJumpAction = new QAction(QStringLiteral("跳转到指定位置…"), this);
+    connect(winFirstAction, &QAction::triggered, this, &MainWindow::jumpToFirstWindow);
+    connect(winPrevAction, &QAction::triggered, this, &MainWindow::jumpToPreviousWindow);
+    connect(winNextAction, &QAction::triggered, this, &MainWindow::jumpToNextWindow);
+    connect(winLastAction, &QAction::triggered, this, &MainWindow::jumpToLastWindow);
+    connect(winJumpAction, &QAction::triggered, this, &MainWindow::jumpToPositionDialog);
+    windowMenu_->addAction(winFirstAction);
+    windowMenu_->addAction(winPrevAction);
+    windowMenu_->addAction(winNextAction);
+    windowMenu_->addAction(winLastAction);
+    windowMenu_->addAction(winJumpAction);
+    windowMenu_->setEnabled(false);
 
     toolBar->addAction(openAction);
     toolBar->addAction(saveAction_);
@@ -509,23 +566,42 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
             QMessageBox::warning(
                 this,
                 QStringLiteral("文件过大"),
-                QStringLiteral("这个文件已经超过当前首版支持上限，暂时无法打开。"));
+                QStringLiteral("文件超过 512 MiB 上限，当前版本暂不支持打开。"));
             return false;
         }
 
-        std::string raw = mqt::core::readRange(path, {0, info.sizeBytes});
-        if (info.hasUtf8Bom && raw.rfind(bomPrefix(), 0) == 0) {
-            raw.erase(0, 3);
-        }
-
-        const QString text = QString::fromUtf8(raw.data(), static_cast<int>(raw.size()));
-        {
-            const QSignalBlocker blocker(editor_);
-            editor_->setPlainText(text);
-            editor_->document()->setModified(false);
+        largeMode_ = info.tier != mqt::core::FileTier::Normal;
+        if (largeMode_) {
+            const bool extreme = info.tier == mqt::core::FileTier::Extreme;
+            const QString headline = extreme
+                ? QStringLiteral("超大文件（256 ~ 512 MiB）")
+                : QStringLiteral("大文件（64 ~ 256 MiB）");
+            const QString body = QStringLiteral("将以%1打开：\n\n• 关闭自动折行\n• 编辑器按 2 MiB 窗口加载（“窗口”菜单切换）\n• 预览基于后台索引，反映已保存内容\n\n确定打开吗？")
+                .arg(extreme ? QStringLiteral("受限模式") : QStringLiteral("大文件模式"));
+            const auto choice = QMessageBox::question(this, headline, body,
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+            if (choice != QMessageBox::Yes) {
+                largeMode_ = false;
+                return false;
+            }
         }
 
         setCurrentPath(path, info);
+        applyTierUiMode();
+
+        if (!largeMode_) {
+            std::string raw = mqt::core::readRange(path, {0, info.sizeBytes});
+            if (info.hasUtf8Bom && raw.rfind(bomPrefix(), 0) == 0) {
+                raw.erase(0, 3);
+            }
+            loadIntoEditor(raw);
+            windowStart_ = 0;
+            windowEnd_ = info.sizeBytes;
+        } else if (!readWindow(0)) {
+            QMessageBox::critical(this, QStringLiteral("打开失败"), QStringLiteral("无法读取文件内容。"));
+            return false;
+        }
+
         dirty_ = false;
         refreshPreview();
         updateWindowState();
@@ -533,6 +609,7 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
         statusBar()->showMessage(QStringLiteral("已打开 %1").arg(toQString(path)), 2000);
         return true;
     } catch (const std::exception& error) {
+        largeMode_ = false;
         QMessageBox::critical(this, QStringLiteral("打开失败"), QString::fromUtf8(error.what()));
         return false;
     }
@@ -564,6 +641,10 @@ bool MainWindow::maybeSaveChanges()
 void MainWindow::refreshPreview()
 {
     updatePreviewLayout();
+    if (windowed()) {
+        requestIndexedPreview();
+        return;
+    }
     const QString previewText = collectPreviewText();
     QUrl baseUrl;
     if (!currentPath_.empty()) {
@@ -593,6 +674,11 @@ void MainWindow::refreshPreview()
 
 void MainWindow::syncPreviewWithEditorScroll()
 {
+    if (windowed()) {
+        // Indexed preview reflects the saved document; no scroll coupling.
+        return;
+    }
+
     const int characterCount = std::max(0, editor_->document()->characterCount() - 1);
     if (characterCount > kFullPreviewCharLimit) {
         if (previewTimer_) {
@@ -664,12 +750,36 @@ bool MainWindow::writeCurrentDocument(const std::filesystem::path& path)
         const auto text = editor_->toPlainText();
         QByteArray utf8 = text.toUtf8();
         std::string data(utf8.constData(), static_cast<std::size_t>(utf8.size()));
-        data = normalizeLineEndings(std::move(data), currentInfo_.newlineStyle);
-        if (currentInfo_.hasUtf8Bom) {
-            data.insert(0, bomPrefix());
+
+        if (windowed()) {
+            // Splice save: original head + edited window + original tail.
+            // Head/tail come from the source document on disk; BOM bytes stay
+            // in the untouched head, so no extra BOM is inserted here.
+            const std::filesystem::path sourcePath = currentPath_;
+            std::string payload;
+            payload.reserve(data.size() * 2);
+            if (windowStart_ > 0) {
+                payload += mqt::core::readRange(sourcePath, {0, windowStart_});
+            }
+            data = normalizeLineEndings(std::move(data), currentInfo_.newlineStyle);
+            payload += data;
+            if (windowEnd_ < currentInfo_.sizeBytes) {
+                payload += mqt::core::readRange(sourcePath, {windowEnd_, currentInfo_.sizeBytes});
+            }
+
+            ensureDiskSpace(path, payload.size());
+            mqt::core::writeFileAtomically(path, payload);
+            windowEnd_ = windowStart_ + data.size();
+        } else {
+            data = normalizeLineEndings(std::move(data), currentInfo_.newlineStyle);
+            if (currentInfo_.hasUtf8Bom) {
+                data.insert(0, bomPrefix());
+            }
+
+            ensureDiskSpace(path, data.size());
+            mqt::core::writeFileAtomically(path, data);
         }
 
-        mqt::core::writeFileAtomically(path, data);
         const auto info = mqt::core::inspectFile(path);
         setCurrentPath(path, info);
         dirty_ = false;
@@ -677,6 +787,9 @@ bool MainWindow::writeCurrentDocument(const std::filesystem::path& path)
         updateWindowState();
         updateStatusBar();
         statusBar()->showMessage(QStringLiteral("已保存 %1").arg(toQString(path)), 2000);
+        if (largeMode_) {
+            refreshPreview(); // re-index the saved content
+        }
         return true;
     } catch (const std::exception& error) {
         QMessageBox::critical(this, QStringLiteral("保存失败"), QString::fromUtf8(error.what()));
@@ -689,6 +802,9 @@ void MainWindow::updateWindowState()
     setWindowTitle(makeTitle(currentPath_, dirty_));
     saveAction_->setEnabled(dirty_);
     reloadAction_->setEnabled(!currentPath_.empty());
+    if (windowMenu_) {
+        windowMenu_->setEnabled(windowed());
+    }
 }
 
 void MainWindow::applyUiStyle()
@@ -789,6 +905,11 @@ void MainWindow::updateStatusBar()
         .arg(line)
         .arg(column));
 
+    if (windowed()) {
+        editorMetaLabel_->setText(editorMetaLabel_->text()
+            + QStringLiteral(" · 窗口字节 %1–%2").arg(windowStart_).arg(windowEnd_));
+    }
+
     if (currentPath_.empty()) {
         pathLabel_->setText(QStringLiteral("文件: 未打开"));
         sizeLabel_->setText(QStringLiteral("大小: -"));
@@ -807,6 +928,264 @@ void MainWindow::setCurrentPath(std::filesystem::path path, const mqt::core::Fil
 {
     currentPath_ = std::move(path);
     currentInfo_ = info;
+}
+
+bool MainWindow::windowed() const
+{
+    return largeMode_ && !currentPath_.empty();
+}
+
+void MainWindow::applyTierUiMode()
+{
+    if (largeMode_) {
+        editor_->setLineWrapMode(QPlainTextEdit::NoWrap);
+        editor_->setWordWrapMode(QTextOption::NoWrap);
+    } else {
+        editor_->setLineWrapMode(QPlainTextEdit::WidgetWidth);
+        editor_->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+    }
+}
+
+bool MainWindow::loadIntoEditor(const std::string& raw)
+{
+    const QString text = QString::fromUtf8(raw.data(), static_cast<int>(raw.size()));
+    {
+        const QSignalBlocker blocker(editor_);
+        editor_->setPlainText(text);
+        editor_->document()->setModified(false);
+    }
+    return true;
+}
+
+bool MainWindow::readWindow(std::uint64_t rawStart)
+{
+    const bool bomHead = rawStart == 0 && currentInfo_.hasUtf8Bom;
+    const std::uint64_t begin = rawStart + (bomHead ? bomPrefix().size() : 0);
+    if (begin >= currentInfo_.sizeBytes) {
+        return false;
+    }
+    const std::uint64_t want = std::min<std::uint64_t>(kWindowBytes, currentInfo_.sizeBytes - begin);
+    std::string raw = mqt::core::readRange(currentPath_, {begin, begin + want});
+    std::size_t cut = alignUtf8Cut(raw);
+    if (currentInfo_.newlineStyle == mqt::core::NewlineStyle::CRLF && cut > 0 && raw[cut - 1] == '\r') {
+        --cut; // keep CRLF pairs together across window seams
+    }
+    raw.resize(cut);
+    windowStart_ = begin;
+    windowEnd_ = begin + cut;
+    return loadIntoEditor(raw);
+}
+
+void MainWindow::jumpToWindowStart(std::uint64_t rawStart)
+{
+    if (!windowed()) {
+        return;
+    }
+    if (dirty_ && !maybeSaveChanges()) {
+        return;
+    }
+    try {
+        if (!readWindow(rawStart)) {
+            statusBar()->showMessage(QStringLiteral("已到达文件边界"), 2000);
+            return;
+        }
+    } catch (const std::exception& error) {
+        QMessageBox::critical(this, QStringLiteral("读取失败"), QString::fromUtf8(error.what()));
+        return;
+    }
+    dirty_ = false;
+    updateWindowState();
+    updateStatusBar();
+    refreshPreview();
+}
+
+void MainWindow::jumpToFirstWindow()
+{
+    jumpToWindowStart(0);
+}
+
+void MainWindow::jumpToPreviousWindow()
+{
+    if (!windowed()) {
+        return;
+    }
+    if (windowStart_ == 0 || (currentInfo_.hasUtf8Bom && windowStart_ <= 3)) {
+        statusBar()->showMessage(QStringLiteral("已在文件开头"), 2000);
+        return;
+    }
+    const std::uint64_t target = windowStart_ > kWindowBytes ? windowStart_ - kWindowBytes : 0;
+    jumpToWindowStart(target);
+}
+
+void MainWindow::jumpToNextWindow()
+{
+    if (!windowed()) {
+        return;
+    }
+    if (windowEnd_ >= currentInfo_.sizeBytes) {
+        statusBar()->showMessage(QStringLiteral("已在文件末尾"), 2000);
+        return;
+    }
+    jumpToWindowStart(windowEnd_);
+}
+
+void MainWindow::jumpToLastWindow()
+{
+    if (!windowed()) {
+        return;
+    }
+    if (currentInfo_.sizeBytes > kWindowBytes) {
+        jumpToWindowStart(currentInfo_.sizeBytes - kWindowBytes);
+    } else {
+        jumpToWindowStart(0);
+    }
+}
+
+void MainWindow::jumpToPositionDialog()
+{
+    if (!windowed()) {
+        return;
+    }
+    const double maxMib = static_cast<double>(currentInfo_.sizeBytes) / static_cast<double>(mqt::core::kMiB);
+    bool ok = false;
+    const double valueMib = QInputDialog::getDouble(
+        this,
+        QStringLiteral("跳转到指定位置"),
+        QStringLiteral("位置（MiB，范围 0 ~ %1）：").arg(maxMib, 0, 'f', 1),
+        static_cast<double>(windowStart_) / static_cast<double>(mqt::core::kMiB),
+        0.0,
+        maxMib,
+        1,
+        &ok);
+    if (!ok) {
+        return;
+    }
+    std::uint64_t target = static_cast<std::uint64_t>(valueMib * static_cast<double>(mqt::core::kMiB));
+    const std::uint64_t maxStart = currentInfo_.sizeBytes > kWindowBytes
+        ? currentInfo_.sizeBytes - kWindowBytes
+        : 0;
+    if (target > maxStart) {
+        target = maxStart;
+    }
+    jumpToWindowStart(target);
+}
+
+void MainWindow::requestIndexedPreview()
+{
+    ++previewGeneration_;
+    if (indexThread_) {
+        indexedPreviewPending_ = true;
+        previewMetaLabel_->setText(QStringLiteral("后台索引中…"));
+        return;
+    }
+    launchIndexThread(previewGeneration_);
+}
+
+void MainWindow::launchIndexThread(std::uint64_t generation)
+{
+    mqt::core::BuildPreviewOptions options;
+    options.maxBlocks = 800;
+    indexThread_ = new PreviewIndexThread(currentPath_, options, generation, this);
+    connect(indexThread_, &QThread::finished, this, [this]() {
+        auto* thread = indexThread_;
+        indexThread_ = nullptr;
+        if (thread != nullptr) {
+            thread->deleteLater();
+            if (thread->generation() == previewGeneration_) {
+                applyIndexedPreviewResult(*thread);
+            }
+        }
+        if (indexedPreviewPending_) {
+            indexedPreviewPending_ = false;
+            if (windowed()) {
+                requestIndexedPreview();
+            }
+        }
+    });
+    indexThread_->start(QThread::LowPriority);
+}
+
+void MainWindow::applyIndexedPreviewResult(const PreviewIndexThread& thread)
+{
+    if (!thread.success()) {
+        previewMetaLabel_->setText(QStringLiteral("预览失败 · %1").arg(thread.errorMessage().left(72)));
+        return;
+    }
+    const auto& index = thread.index();
+
+    QString markdown;
+    markdown.reserve(64 * 1024);
+    bool charTruncated = false;
+    for (const auto& block : index.blocks) {
+        QString piece;
+        switch (block.type) {
+        case mqt::core::MarkdownBlockType::Heading: {
+            const int level = std::clamp<int>(block.headingLevel, 1, 6);
+            piece = QString(level, QLatin1Char('#'));
+            piece += QLatin1Char(' ');
+            piece += QString::fromUtf8(block.text.data(), static_cast<int>(block.text.size()));
+            piece += QLatin1Char('\n');
+            break;
+        }
+        case mqt::core::MarkdownBlockType::CodeFence: {
+            piece = QStringLiteral("```\n");
+            piece += QString::fromUtf8(block.text.data(), static_cast<int>(block.text.size()));
+            piece += QStringLiteral("\n```\n");
+            break;
+        }
+        case mqt::core::MarkdownBlockType::Paragraph:
+        default: {
+            piece = QString::fromUtf8(block.text.data(), static_cast<int>(block.text.size()));
+            piece += QStringLiteral("\n\n");
+            break;
+        }
+        }
+        if (markdown.size() + piece.size() > kMaxIndexedPreviewChars) {
+            charTruncated = true;
+            break;
+        }
+        markdown += piece;
+    }
+
+    QUrl baseUrl;
+    if (!currentPath_.empty()) {
+        QString basePath = toQString(currentPath_.parent_path());
+        if (!basePath.endsWith(QLatin1Char('/'))) {
+            basePath += QLatin1Char('/');
+        }
+        baseUrl = QUrl::fromLocalFile(basePath);
+    }
+    const auto renderResult = renderMarkdownDocument(*preview_->document(), markdown, baseUrl);
+    if (!renderResult.success) {
+        previewMetaLabel_->setText(QStringLiteral("预览渲染失败 · %1").arg(renderResult.errorMessage.left(72)));
+        return;
+    }
+    preview_->verticalScrollBar()->setValue(0);
+
+    QString meta = QStringLiteral("索引预览（已保存内容）· 块 %1 · 扫描 %2 / 共 %3")
+        .arg(index.blocks.size())
+        .arg(formatFileSize(index.bytesScanned))
+        .arg(formatFileSize(currentInfo_.sizeBytes));
+    if (index.truncated || charTruncated) {
+        meta += QStringLiteral(" · 已截断");
+    }
+    previewMetaLabel_->setText(meta);
+}
+
+void MainWindow::ensureDiskSpace(const std::filesystem::path& path, std::uint64_t neededBytes) const
+{
+    constexpr std::uint64_t kMargin = 1ULL << 20; // temp copy coexists during atomic replace
+    constexpr std::uint64_t kMax = std::numeric_limits<std::uint64_t>::max();
+    const std::uint64_t required = neededBytes > (kMax - kMargin) / 2 ? kMax : neededBytes * 2 + kMargin;
+    const auto available = mqt::core::availableDiskBytes(path);
+    if (available < required) {
+        throw std::runtime_error(
+            "not enough free disk space to save safely: need about "
+            + std::to_string(required / (1024ULL * 1024ULL))
+            + " MiB, but only "
+            + std::to_string(available / (1024ULL * 1024ULL))
+            + " MiB available");
+    }
 }
 
 } // namespace mqt::gui

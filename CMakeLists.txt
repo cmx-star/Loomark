@@ -171,6 +171,8 @@ add_executable(markdown_qt_gui
     src/gui/application_logger.cpp
     src/gui/main.cpp
     src/gui/markdown_document_renderer.cpp
+    src/gui/preview_index_worker.h
+    src/gui/preview_index_worker.cpp
     src/gui/update_checker.h
     src/gui/main_window.cpp
     src/gui/update_checker.cpp
