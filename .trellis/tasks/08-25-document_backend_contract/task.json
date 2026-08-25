@@ -3,24 +3,33 @@
   "name": "document_backend_contract",
   "title": "IDocumentBackend 契约定义",
   "description": "批次2 M05：定义 IDocumentBackend 公共契约（snapshot、read、locateLines、apply、search、版本与取消语义），core 契约测试覆盖版本变化、范围错误和取消。为 M06 Scintilla 原型与后续 DocumentSession 提供统一后端接口。",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
-  "package": null,
+  "package": "core",
   "priority": "P0",
   "creator": "cmx",
   "assignee": "cmx",
   "createdAt": "2026-08-25",
-  "completedAt": null,
-  "branch": null,
+  "completedAt": "2026-08-25",
+  "branch": "feat/large-file-windowed-gui",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "d189c3f",
   "pr_url": null,
   "subtasks": [],
   "children": [],
   "parent": null,
-  "relatedFiles": [],
-  "notes": "",
-  "meta": {}
+  "relatedFiles": [
+    "src/core/document_backend.h",
+    "src/core/document_backend.cpp",
+    "tests/document_backend_tests.cpp"
+  ],
+  "notes": "已完成 IDocumentBackend 接口定义与 FileDocumentBackend 参考实现。21 项单元测试全部通过，ctest 6/6 全绿。关键决策：body-only 坐标系统（BOM 偏移不加入内部坐标）、apply() 使用 front-to-back 顺序应用、reload() 增加版本号。",
+  "meta": {
+    "test_count": 21,
+    "ctest_passed": 6,
+    "files_added": 3,
+    "lines_added": 1145
+  }
 }
