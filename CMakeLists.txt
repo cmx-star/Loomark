@@ -98,6 +98,7 @@ target_include_directories(md4qt
 set(CMAKE_CXX_STANDARD 20)
 
 add_library(markdown_qt_core
+    src/core/document_backend.cpp
     src/core/document_file.cpp
     src/core/file_tier.cpp
     src/core/markdown_index.cpp
@@ -269,6 +270,22 @@ target_link_libraries(markdown_qt_core_tests
 )
 
 add_test(NAME markdown_qt_core_tests COMMAND markdown_qt_core_tests)
+
+add_executable(markdown_qt_document_backend_tests
+    tests/document_backend_tests.cpp
+)
+
+target_link_libraries(markdown_qt_document_backend_tests
+    PRIVATE
+        markdown_qt_core
+)
+
+target_compile_options(markdown_qt_document_backend_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+
+add_test(NAME markdown_qt_document_backend_tests COMMAND markdown_qt_document_backend_tests)
 
 add_executable(markdown_qt_window_boundary_tests
     src/gui/window_boundary.cpp
