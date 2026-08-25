@@ -1,9 +1,11 @@
 #include "gui/main_window.h"
 
 #include "gui/application_logger.h"
+#include "gui/file_inspect_worker.h"
 #include "gui/markdown_document_renderer.h"
 #include "gui/preview_index_worker.h"
 #include "gui/update_checker.h"
+#include "gui/window_boundary.h"
 
 #include "core/file_tier.h"
 #include "core/markdown_index.h"
@@ -49,6 +51,7 @@
 #include <exception>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -170,37 +173,64 @@ std::string bomPrefix()
     return std::string("\xEF\xBB\xBF", 3);
 }
 
-// Returns a cut position <= data.size() that does not split a UTF-8
-// multi-byte sequence at the end of the buffer.
-std::size_t alignUtf8Cut(const std::string& data)
+// Moves an arbitrary byte offset forward until it starts on a UTF-8 character
+// boundary and not between the CR and LF of a CRLF pair. Reads only a small
+// probe around the offset, never the whole file.
+std::uint64_t alignWindowStart(const std::filesystem::path& path, std::uint64_t requested,
+    std::uint64_t fileSize)
 {
-    if (data.empty()) {
-        return 0;
+    constexpr std::uint64_t kProbeSlack = 8;
+    if (requested == 0 || requested >= fileSize) {
+        return requested;
     }
-    std::size_t cut = data.size();
-    std::size_t scanned = 0;
-    const std::size_t limit = std::min<std::size_t>(3, cut);
-    while (scanned < limit) {
-        const auto ch = static_cast<unsigned char>(data[cut - 1]);
-        if ((ch & 0xC0) == 0x80) { // continuation byte inside a split sequence
-            --cut;
-            ++scanned;
-            continue;
-        }
-        std::size_t seqLen = 1;
-        if ((ch & 0xE0) == 0xC0) {
-            seqLen = 2;
-        } else if ((ch & 0xF0) == 0xE0) {
-            seqLen = 3;
-        } else if ((ch & 0xF8) == 0xF0) {
-            seqLen = 4;
-        }
-        if (seqLen > scanned + 1) {
-            --cut; // trailing lead byte whose sequence is incomplete
-        }
-        break;
+
+    const std::uint64_t probeBegin = requested >= kProbeSlack ? requested - kProbeSlack : 0;
+    const std::uint64_t probeEnd = std::min<std::uint64_t>(fileSize, requested + kProbeSlack);
+    const auto probe = mqt::core::readRange(path, {probeBegin, probeEnd});
+    std::uint64_t aligned = requested;
+
+    // Do not start on the LF half of a CRLF pair.
+    const auto s = static_cast<std::size_t>(requested - probeBegin);
+    if (s < probe.size() && probe[s] == '\n' && s > 0 && probe[s - 1] == '\r') {
+        ++aligned;
     }
-    return cut;
+
+    // Skip continuation bytes so the window starts at a character boundary.
+    auto idx = static_cast<std::size_t>(aligned - probeBegin);
+    while (idx < probe.size() && (static_cast<unsigned char>(probe[idx]) & 0xC0) == 0x80) {
+        ++idx;
+    }
+    return probeBegin + idx;
+}
+
+// Streams a byte range from `source` into `writer` in fixed chunks so large
+// head/tail regions never materialize fully in memory.
+void streamCopyRange(mqt::core::AtomicFileWriter& writer, const std::filesystem::path& source,
+    std::uint64_t start, std::uint64_t length)
+{
+    constexpr std::uint64_t kChunkBytes = 1024 * 1024;
+    if (length == 0) {
+        return;
+    }
+    std::ifstream input(source, std::ios::binary);
+    if (!input) {
+        throw std::runtime_error("failed to open file: " + source.string());
+    }
+    input.seekg(static_cast<std::streamoff>(start), std::ios::beg);
+    if (!input) {
+        throw std::runtime_error("failed to seek file: " + source.string());
+    }
+    std::string buffer;
+    buffer.resize(static_cast<std::size_t>(std::min(kChunkBytes, length)));
+    while (length > 0) {
+        const auto step = std::min<std::uint64_t>(kChunkBytes, length);
+        input.read(buffer.data(), static_cast<std::streamsize>(step));
+        if (input.gcount() != static_cast<std::streamsize>(step)) {
+            throw std::runtime_error("failed to read source range during save");
+        }
+        writer.write(std::string_view(buffer.data(), static_cast<std::size_t>(step)));
+        length -= step;
+    }
 }
 
 QFont interfaceFont(int pointSize = 13)
@@ -464,11 +494,12 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    if (maybeSaveChanges()) {
-        event->accept();
+    if (!maybeSaveChanges()) {
+        event->ignore();
         return;
     }
-    event->ignore();
+    shutdownBackgroundWork();
+    event->accept();
 }
 
 void MainWindow::resizeEvent(QResizeEvent* event)
@@ -561,7 +592,9 @@ void MainWindow::openLogDirectory()
 bool MainWindow::loadDocument(const std::filesystem::path& path)
 {
     try {
-        const auto info = mqt::core::inspectFile(path);
+        // Fast metadata probe only: never scan the whole file on the UI
+        // thread. Newline-style classification runs in the background.
+        const auto info = mqt::core::statFile(path);
         if (info.tier == mqt::core::FileTier::Reject) {
             QMessageBox::warning(
                 this,
@@ -570,8 +603,8 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
             return false;
         }
 
-        largeMode_ = info.tier != mqt::core::FileTier::Normal;
-        if (largeMode_) {
+        const bool nextLargeMode = info.tier != mqt::core::FileTier::Normal;
+        if (nextLargeMode) {
             const bool extreme = info.tier == mqt::core::FileTier::Extreme;
             const QString headline = extreme
                 ? QStringLiteral("超大文件（256 ~ 512 MiB）")
@@ -581,12 +614,19 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
             const auto choice = QMessageBox::question(this, headline, body,
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
             if (choice != QMessageBox::Yes) {
-                largeMode_ = false;
                 return false;
             }
         }
 
+        finishInspectThread();
+        ++previewGeneration_;
+        indexedPreviewPending_ = false;
+        if (indexThread_) {
+            indexThread_->cancel();
+        }
+        largeMode_ = nextLargeMode;
         setCurrentPath(path, info);
+        ++documentGeneration_;
         applyTierUiMode();
 
         if (!largeMode_) {
@@ -602,6 +642,7 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
             return false;
         }
 
+        launchInspectThread();
         dirty_ = false;
         refreshPreview();
         updateWindowState();
@@ -609,7 +650,6 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
         statusBar()->showMessage(QStringLiteral("已打开 %1").arg(toQString(path)), 2000);
         return true;
     } catch (const std::exception& error) {
-        largeMode_ = false;
         QMessageBox::critical(this, QStringLiteral("打开失败"), QString::fromUtf8(error.what()));
         return false;
     }
@@ -747,40 +787,59 @@ QString MainWindow::collectPreviewText()
 bool MainWindow::writeCurrentDocument(const std::filesystem::path& path)
 {
     try {
-        const auto text = editor_->toPlainText();
-        QByteArray utf8 = text.toUtf8();
+        // The edited window is normalized to the detected newline style, so
+        // make sure the background classification finished before writing.
+        completeInspection();
+
+        const QString plain = editor_->toPlainText();
+        QByteArray utf8 = plain.toUtf8();
         std::string data(utf8.constData(), static_cast<std::size_t>(utf8.size()));
+        data = normalizeLineEndings(std::move(data), currentInfo_.newlineStyle);
 
+        // Splice save: original head + edited window + original tail, streamed
+        // straight to the temp file in chunks. Head/tail come from the source
+        // document on disk; BOM bytes stay in the untouched head, so no extra
+        // BOM is inserted here.
+        std::uint64_t totalBytes = data.size();
         if (windowed()) {
-            // Splice save: original head + edited window + original tail.
-            // Head/tail come from the source document on disk; BOM bytes stay
-            // in the untouched head, so no extra BOM is inserted here.
-            const std::filesystem::path sourcePath = currentPath_;
-            std::string payload;
-            payload.reserve(data.size() * 2);
             if (windowStart_ > 0) {
-                payload += mqt::core::readRange(sourcePath, {0, windowStart_});
+                totalBytes += windowStart_;
             }
-            data = normalizeLineEndings(std::move(data), currentInfo_.newlineStyle);
-            payload += data;
             if (windowEnd_ < currentInfo_.sizeBytes) {
-                payload += mqt::core::readRange(sourcePath, {windowEnd_, currentInfo_.sizeBytes});
+                totalBytes += currentInfo_.sizeBytes - windowEnd_;
             }
+        }
+        ensureDiskSpace(path, totalBytes);
 
-            ensureDiskSpace(path, payload.size());
-            mqt::core::writeFileAtomically(path, payload);
-            windowEnd_ = windowStart_ + data.size();
-        } else {
-            data = normalizeLineEndings(std::move(data), currentInfo_.newlineStyle);
-            if (currentInfo_.hasUtf8Bom) {
-                data.insert(0, bomPrefix());
+        {
+            mqt::core::AtomicFileWriter writer(path);
+            if (windowed()) {
+                const std::filesystem::path sourcePath = currentPath_;
+                if (windowStart_ > 0) {
+                    streamCopyRange(writer, sourcePath, 0, windowStart_);
+                }
+                writer.write(data);
+                if (windowEnd_ < currentInfo_.sizeBytes) {
+                    streamCopyRange(writer, sourcePath, windowEnd_, currentInfo_.sizeBytes - windowEnd_);
+                }
+            } else {
+                if (currentInfo_.hasUtf8Bom) {
+                    writer.write(bomPrefix());
+                }
+                writer.write(data);
             }
-
-            ensureDiskSpace(path, data.size());
-            mqt::core::writeFileAtomically(path, data);
+            writer.commit();
         }
 
-        const auto info = mqt::core::inspectFile(path);
+        if (windowed()) {
+            windowEnd_ = windowStart_ + data.size();
+        }
+
+        // Refresh bookkeeping without rescanning every byte of the file we
+        // just wrote: the content already uses currentInfo_.newlineStyle.
+        auto info = mqt::core::statFile(path);
+        info.newlineStyle = currentInfo_.newlineStyle;
+        info.newlineStyleKnown = currentInfo_.newlineStyleKnown;
         setCurrentPath(path, info);
         dirty_ = false;
         editor_->document()->setModified(false);
@@ -959,17 +1018,20 @@ bool MainWindow::loadIntoEditor(const std::string& raw)
 
 bool MainWindow::readWindow(std::uint64_t rawStart)
 {
+    // Arbitrary jump targets may land inside a UTF-8 sequence or between the
+    // CR and LF of a CRLF pair; move forward to a safe boundary first so the
+    // saved splice never corrupts boundary bytes.
+    rawStart = alignWindowStart(currentPath_, rawStart, currentInfo_.sizeBytes);
     const bool bomHead = rawStart == 0 && currentInfo_.hasUtf8Bom;
     const std::uint64_t begin = rawStart + (bomHead ? bomPrefix().size() : 0);
     if (begin >= currentInfo_.sizeBytes) {
         return false;
     }
     const std::uint64_t want = std::min<std::uint64_t>(kWindowBytes, currentInfo_.sizeBytes - begin);
-    std::string raw = mqt::core::readRange(currentPath_, {begin, begin + want});
-    std::size_t cut = alignUtf8Cut(raw);
-    if (currentInfo_.newlineStyle == mqt::core::NewlineStyle::CRLF && cut > 0 && raw[cut - 1] == '\r') {
-        --cut; // keep CRLF pairs together across window seams
-    }
+    const std::uint64_t readEnd =
+        std::min<std::uint64_t>(currentInfo_.sizeBytes, begin + want + 1);
+    std::string raw = mqt::core::readRange(currentPath_, {begin, readEnd});
+    const std::size_t cut = safeWindowContentLength(raw, static_cast<std::size_t>(want));
     raw.resize(cut);
     windowStart_ = begin;
     windowEnd_ = begin + cut;
@@ -1091,11 +1153,12 @@ void MainWindow::launchIndexThread(std::uint64_t generation)
     connect(indexThread_, &QThread::finished, this, [this]() {
         auto* thread = indexThread_;
         indexThread_ = nullptr;
-        if (thread != nullptr) {
-            thread->deleteLater();
-            if (thread->generation() == previewGeneration_) {
-                applyIndexedPreviewResult(*thread);
-            }
+        if (thread == nullptr) {
+            return;
+        }
+        thread->deleteLater();
+        if (!thread->cancelled() && thread->generation() == previewGeneration_) {
+            applyIndexedPreviewResult(*thread);
         }
         if (indexedPreviewPending_) {
             indexedPreviewPending_ = false;
@@ -1105,6 +1168,71 @@ void MainWindow::launchIndexThread(std::uint64_t generation)
         }
     });
     indexThread_->start(QThread::LowPriority);
+}
+
+void MainWindow::launchInspectThread()
+{
+    inspectThread_ = new FileInspectThread(currentPath_, documentGeneration_, this);
+    connect(inspectThread_, &QThread::finished, this, [this]() {
+        auto* thread = inspectThread_;
+        inspectThread_ = nullptr;
+        if (thread == nullptr) {
+            return;
+        }
+        thread->deleteLater();
+        if (thread->cancelled()) {
+            return;
+        }
+        if (thread->generation() == documentGeneration_ && thread->success()) {
+            applyInspectedInfo(thread->info());
+            updateStatusBar();
+        }
+    });
+    inspectThread_->start(QThread::LowPriority);
+}
+
+void MainWindow::applyInspectedInfo(const mqt::core::FileInfo& info)
+{
+    if (info.path != currentPath_ || info.sizeBytes != currentInfo_.sizeBytes) {
+        return; // document changed while the scan was running
+    }
+    currentInfo_.newlineStyle = info.newlineStyle;
+    currentInfo_.newlineStyleKnown = info.newlineStyleKnown;
+}
+
+void MainWindow::finishInspectThread()
+{
+    if (!inspectThread_) {
+        return;
+    }
+    auto* thread = inspectThread_;
+    inspectThread_ = nullptr;
+    thread->cancel();
+    thread->wait();
+    thread->deleteLater();
+}
+
+void MainWindow::completeInspection()
+{
+    if (!inspectThread_) {
+        return;
+    }
+    auto* thread = inspectThread_;
+    inspectThread_ = nullptr;
+    thread->wait();
+    thread->deleteLater();
+    if (!thread->cancelled() && thread->success()) {
+        applyInspectedInfo(thread->info());
+    }
+}
+
+void MainWindow::shutdownBackgroundWork()
+{
+    if (indexThread_) {
+        indexThread_->cancel();
+        indexThread_->wait();
+    }
+    finishInspectThread();
 }
 
 void MainWindow::applyIndexedPreviewResult(const PreviewIndexThread& thread)
@@ -1118,7 +1246,9 @@ void MainWindow::applyIndexedPreviewResult(const PreviewIndexThread& thread)
     QString markdown;
     markdown.reserve(64 * 1024);
     bool charTruncated = false;
+    bool blockTextTruncated = false;
     for (const auto& block : index.blocks) {
+        blockTextTruncated = blockTextTruncated || block.textTruncated;
         QString piece;
         switch (block.type) {
         case mqt::core::MarkdownBlockType::Heading: {
@@ -1132,12 +1262,18 @@ void MainWindow::applyIndexedPreviewResult(const PreviewIndexThread& thread)
         case mqt::core::MarkdownBlockType::CodeFence: {
             piece = QStringLiteral("```\n");
             piece += QString::fromUtf8(block.text.data(), static_cast<int>(block.text.size()));
+            if (block.textTruncated) {
+                piece += QStringLiteral("…\n");
+            }
             piece += QStringLiteral("\n```\n");
             break;
         }
         case mqt::core::MarkdownBlockType::Paragraph:
         default: {
             piece = QString::fromUtf8(block.text.data(), static_cast<int>(block.text.size()));
+            if (block.textTruncated) {
+                piece += QStringLiteral("…");
+            }
             piece += QStringLiteral("\n\n");
             break;
         }
@@ -1168,7 +1304,7 @@ void MainWindow::applyIndexedPreviewResult(const PreviewIndexThread& thread)
         .arg(index.blocks.size())
         .arg(formatFileSize(index.bytesScanned))
         .arg(formatFileSize(currentInfo_.sizeBytes));
-    if (index.truncated || charTruncated) {
+    if (index.truncated || charTruncated || blockTextTruncated) {
         meta += QStringLiteral(" · 已截断");
     }
     previewMetaLabel_->setText(meta);

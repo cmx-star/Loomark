@@ -8,15 +8,32 @@ PreviewIndexThread::PreviewIndexThread(std::filesystem::path path,
     QObject* parent)
     : QThread(parent)
     , path_(std::move(path))
-    , options_(options)
+    , options_(std::move(options))
     , generation_(generation)
 {
+}
+
+PreviewIndexThread::~PreviewIndexThread()
+{
+    cancel();
+    wait();
+}
+
+void PreviewIndexThread::cancel()
+{
+    cancelled_.store(true, std::memory_order_relaxed);
 }
 
 void PreviewIndexThread::run()
 {
     try {
+        options_.cancelFlag = &cancelled_;
         index_ = mqt::core::buildPreviewIndex(path_, options_);
+        if (index_.cancelled || cancelled_.load(std::memory_order_relaxed)) {
+            errorMessage_ = QStringLiteral("preview indexing cancelled");
+            success_ = false;
+            return;
+        }
         success_ = true;
     } catch (const std::exception& error) {
         errorMessage_ = QString::fromUtf8(error.what());

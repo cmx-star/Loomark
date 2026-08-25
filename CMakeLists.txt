@@ -169,6 +169,8 @@ add_executable(markdown_qt_gui
     resources/resources.qrc
     src/gui/application_logger.h
     src/gui/application_logger.cpp
+    src/gui/file_inspect_worker.h
+    src/gui/file_inspect_worker.cpp
     src/gui/main.cpp
     src/gui/markdown_document_renderer.cpp
     src/gui/preview_index_worker.h
@@ -176,6 +178,8 @@ add_executable(markdown_qt_gui
     src/gui/update_checker.h
     src/gui/main_window.cpp
     src/gui/update_checker.cpp
+    src/gui/window_boundary.h
+    src/gui/window_boundary.cpp
 )
 
 if(APPLE)
@@ -266,6 +270,23 @@ target_link_libraries(markdown_qt_core_tests
 
 add_test(NAME markdown_qt_core_tests COMMAND markdown_qt_core_tests)
 
+add_executable(markdown_qt_window_boundary_tests
+    src/gui/window_boundary.cpp
+    tests/window_boundary_tests.cpp
+)
+
+target_include_directories(markdown_qt_window_boundary_tests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_compile_options(markdown_qt_window_boundary_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+
+add_test(NAME markdown_qt_window_boundary_tests COMMAND markdown_qt_window_boundary_tests)
+
 add_executable(markdown_qt_markdown_renderer_tests
     src/gui/markdown_document_renderer.cpp
     tests/markdown_document_renderer_tests.cpp
@@ -314,9 +335,58 @@ target_compile_options(markdown_qt_update_checker_tests
 )
 
 add_test(NAME markdown_qt_update_checker_tests COMMAND markdown_qt_update_checker_tests)
+
+add_executable(markdown_qt_main_window_tests
+    resources/resources.qrc
+    src/gui/application_logger.h
+    src/gui/application_logger.cpp
+    src/gui/file_inspect_worker.h
+    src/gui/file_inspect_worker.cpp
+    src/gui/main_window.h
+    src/gui/main_window.cpp
+    src/gui/markdown_document_renderer.h
+    src/gui/markdown_document_renderer.cpp
+    src/gui/preview_index_worker.h
+    src/gui/preview_index_worker.cpp
+    src/gui/update_checker.h
+    src/gui/update_checker.cpp
+    src/gui/window_boundary.h
+    src/gui/window_boundary.cpp
+    tests/main_window_tests.cpp
+)
+
+target_link_libraries(markdown_qt_main_window_tests
+    PRIVATE
+        markdown_qt_core
+        md4qt::md4qt
+        qjs
+        Qt6::Network
+        Qt6::Widgets
+        Qt6::Svg
+)
+
+target_compile_definitions(markdown_qt_main_window_tests
+    PRIVATE
+        "MQT_APP_VERSION=\"${MQT_APP_VERSION}\""
+        MQT_BUILD_TESTS
+)
+
+target_compile_options(markdown_qt_main_window_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+
+add_dependencies(markdown_qt_main_window_tests mathjax_quickjs_bundle)
+add_test(NAME markdown_qt_main_window_tests COMMAND markdown_qt_main_window_tests)
+
 set(MARKDOWN_RENDERER_TEST_ENV "MQT_MATHJAX_BUNDLE=${MATHJAX_QUICKJS_BUNDLE}")
 set_tests_properties(markdown_qt_markdown_renderer_tests
     PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         ENVIRONMENT "${MARKDOWN_RENDERER_TEST_ENV}"
+)
+set_tests_properties(markdown_qt_main_window_tests
+    PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;${MARKDOWN_RENDERER_TEST_ENV}"
 )

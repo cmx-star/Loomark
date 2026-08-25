@@ -3,7 +3,7 @@
   "name": "large_file_windowed_gui",
   "title": "GUI 大文件窗口化接入",
   "description": "把 core 大文件能力（inspectFile 分档、buildPreviewIndex 流式索引、readRange 窗口化读取、安全保存）接入 Qt Widgets GUI，对齐路线图 §8 档位矩阵与高成本保护基线。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -22,5 +22,7 @@
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "status": "in_progress"
+  }
 }

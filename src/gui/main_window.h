@@ -16,6 +16,10 @@ class QTimer;
 namespace mqt::gui {
 
 class PreviewIndexThread;
+class FileInspectThread;
+#ifdef MQT_BUILD_TESTS
+class MainWindowTestAccess;
+#endif
 class UpdateChecker;
 
 class MainWindow final : public QMainWindow {
@@ -27,6 +31,10 @@ protected:
     void resizeEvent(QResizeEvent* event) override;
 
 private:
+#ifdef MQT_BUILD_TESTS
+    friend class MainWindowTestAccess;
+#endif
+
     void openDocument();
     void saveDocument();
     void saveDocumentAs();
@@ -59,6 +67,12 @@ private:
     void requestIndexedPreview();
     void launchIndexThread(std::uint64_t generation);
     void applyIndexedPreviewResult(const PreviewIndexThread& thread);
+    // Background whole-file inspection (newline style) for the open document.
+    void launchInspectThread();
+    void finishInspectThread();
+    void completeInspection();
+    void applyInspectedInfo(const mqt::core::FileInfo& info);
+    void shutdownBackgroundWork();
     void ensureDiskSpace(const std::filesystem::path& path, std::uint64_t neededBytes) const;
 
     std::filesystem::path currentPath_;
@@ -72,6 +86,8 @@ private:
     std::uint64_t previewGeneration_ = 0;
     bool indexedPreviewPending_ = false;
     PreviewIndexThread* indexThread_ = nullptr;
+    FileInspectThread* inspectThread_ = nullptr;
+    std::uint64_t documentGeneration_ = 0;
     QMenu* windowMenu_ = nullptr;
 
     QPlainTextEdit* editor_ = nullptr;

@@ -25,6 +25,7 @@
 - `cmake --build --preset macos-debug` 全绿
 - ctest / core_tests 全绿
 - GUI 手动场景清单（PRD AC 1–8）逐项核对，无法自动化项如实记录
+- 当前验证结果与性能数据记录在 `verification.md`
 
 ## 风险与注意
 
