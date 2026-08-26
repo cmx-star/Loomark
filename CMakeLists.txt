@@ -33,6 +33,36 @@ FetchContent_Declare(md4qt
 
 FetchContent_MakeAvailable(md4qt)
 
+# ---------------------------------------------------------------------------
+# M06: Scintilla (HPND license) via FetchContent — isolated prototype only
+# ---------------------------------------------------------------------------
+option(MQT_BUILD_SCINTILLA_EXAMPLE "Build the Scintilla integration prototype." ON)
+if(MQT_BUILD_SCINTILLA_EXAMPLE)
+    # 上游 fork 的 cmake-support 分支提供 CMake 构建参考；浅克隆加速首次拉取。
+    # 解析到的提交：2812df4eb4b95bcebe4cbba656cd024c28415d20（记录于任务 design.md）。
+    # 只 Populate 不 MakeAvailable：fork 自带 CMakeLists 依赖 Qt6Core5Compat，
+    # 本项目用自己的目标定义直接编译其源码（见下方 markdown_qt_scintilla）。
+    FetchContent_Declare(scintilla
+        GIT_REPOSITORY https://github.com/diegoiast/scintilla-code.git
+        GIT_TAG cmake-support
+        GIT_SHALLOW TRUE
+        PATCH_COMMAND
+            ${CMAKE_COMMAND}
+            -DSCINTILLA_PATCH_DIR=<SOURCE_DIR>
+            -DMQT_PROJECT_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patch-scintilla-qt6.cmake
+    )
+    FetchContent_GetProperties(scintilla)
+    if(NOT scintilla_POPULATED)
+        cmake_policy(PUSH)
+        if(POLICY CMP0169)
+            cmake_policy(SET CMP0169 OLD)
+        endif()
+        FetchContent_Populate(scintilla)
+        cmake_policy(POP)
+    endif()
+endif()
+
 FetchContent_Declare(quickjs
     GIT_REPOSITORY https://github.com/quickjs-ng/quickjs.git
     GIT_TAG af0a40d94424476ce9365e881848af4c030517ec
@@ -96,6 +126,115 @@ target_include_directories(md4qt
 
 # md4qt targets C++17 internally. Restore this project's standard for targets below.
 set(CMAKE_CXX_STANDARD 20)
+
+# M06: Scintilla static library (HPND license)
+if(MQT_BUILD_SCINTILLA_EXAMPLE AND scintilla_POPULATED)
+    set(SCINTILLA_QT_SOURCES
+        "${scintilla_SOURCE_DIR}/qt/ScintillaEditBase/PlatQt.cpp"
+        "${scintilla_SOURCE_DIR}/qt/ScintillaEditBase/PlatQt.h"
+        "${scintilla_SOURCE_DIR}/qt/ScintillaEditBase/ScintillaEditBase.cpp"
+        "${scintilla_SOURCE_DIR}/qt/ScintillaEditBase/ScintillaEditBase.h"
+        "${scintilla_SOURCE_DIR}/qt/ScintillaEditBase/ScintillaQt.cpp"
+        "${scintilla_SOURCE_DIR}/qt/ScintillaEditBase/ScintillaQt.h"
+        "${scintilla_SOURCE_DIR}/src/AutoComplete.cxx"
+        "${scintilla_SOURCE_DIR}/src/AutoComplete.h"
+        "${scintilla_SOURCE_DIR}/src/CallTip.cxx"
+        "${scintilla_SOURCE_DIR}/src/CallTip.h"
+        "${scintilla_SOURCE_DIR}/src/CaseConvert.cxx"
+        "${scintilla_SOURCE_DIR}/src/CaseConvert.h"
+        "${scintilla_SOURCE_DIR}/src/CaseFolder.cxx"
+        "${scintilla_SOURCE_DIR}/src/CaseFolder.h"
+        "${scintilla_SOURCE_DIR}/src/CellBuffer.cxx"
+        "${scintilla_SOURCE_DIR}/src/CellBuffer.h"
+        "${scintilla_SOURCE_DIR}/src/ChangeHistory.cxx"
+        "${scintilla_SOURCE_DIR}/src/ChangeHistory.h"
+        "${scintilla_SOURCE_DIR}/src/CharacterCategoryMap.cxx"
+        "${scintilla_SOURCE_DIR}/src/CharacterCategoryMap.h"
+        "${scintilla_SOURCE_DIR}/src/CharacterType.cxx"
+        "${scintilla_SOURCE_DIR}/src/CharacterType.h"
+        "${scintilla_SOURCE_DIR}/src/CharClassify.cxx"
+        "${scintilla_SOURCE_DIR}/src/CharClassify.h"
+        "${scintilla_SOURCE_DIR}/src/ContractionState.cxx"
+        "${scintilla_SOURCE_DIR}/src/ContractionState.h"
+        "${scintilla_SOURCE_DIR}/src/DBCS.cxx"
+        "${scintilla_SOURCE_DIR}/src/DBCS.h"
+        "${scintilla_SOURCE_DIR}/src/Debugging.h"
+        "${scintilla_SOURCE_DIR}/src/Decoration.cxx"
+        "${scintilla_SOURCE_DIR}/src/Decoration.h"
+        "${scintilla_SOURCE_DIR}/src/Document.cxx"
+        "${scintilla_SOURCE_DIR}/src/Document.h"
+        "${scintilla_SOURCE_DIR}/src/EditModel.cxx"
+        "${scintilla_SOURCE_DIR}/src/EditModel.h"
+        "${scintilla_SOURCE_DIR}/src/Editor.cxx"
+        "${scintilla_SOURCE_DIR}/src/Editor.h"
+        "${scintilla_SOURCE_DIR}/src/EditView.cxx"
+        "${scintilla_SOURCE_DIR}/src/EditView.h"
+        "${scintilla_SOURCE_DIR}/src/ElapsedPeriod.h"
+        "${scintilla_SOURCE_DIR}/src/Geometry.cxx"
+        "${scintilla_SOURCE_DIR}/src/Geometry.h"
+        "${scintilla_SOURCE_DIR}/src/Indicator.cxx"
+        "${scintilla_SOURCE_DIR}/src/Indicator.h"
+        "${scintilla_SOURCE_DIR}/src/KeyMap.cxx"
+        "${scintilla_SOURCE_DIR}/src/KeyMap.h"
+        "${scintilla_SOURCE_DIR}/src/LineMarker.cxx"
+        "${scintilla_SOURCE_DIR}/src/LineMarker.h"
+        "${scintilla_SOURCE_DIR}/src/MarginView.cxx"
+        "${scintilla_SOURCE_DIR}/src/MarginView.h"
+        "${scintilla_SOURCE_DIR}/src/Partitioning.h"
+        "${scintilla_SOURCE_DIR}/src/PerLine.cxx"
+        "${scintilla_SOURCE_DIR}/src/PerLine.h"
+        "${scintilla_SOURCE_DIR}/src/Platform.h"
+        "${scintilla_SOURCE_DIR}/src/PositionCache.cxx"
+        "${scintilla_SOURCE_DIR}/src/PositionCache.h"
+        "${scintilla_SOURCE_DIR}/src/Position.h"
+        "${scintilla_SOURCE_DIR}/src/RESearch.cxx"
+        "${scintilla_SOURCE_DIR}/src/RESearch.h"
+        "${scintilla_SOURCE_DIR}/src/RunStyles.cxx"
+        "${scintilla_SOURCE_DIR}/src/RunStyles.h"
+        "${scintilla_SOURCE_DIR}/src/ScintillaBase.cxx"
+        "${scintilla_SOURCE_DIR}/src/ScintillaBase.h"
+        "${scintilla_SOURCE_DIR}/src/Selection.cxx"
+        "${scintilla_SOURCE_DIR}/src/Selection.h"
+        "${scintilla_SOURCE_DIR}/src/SparseVector.h"
+        "${scintilla_SOURCE_DIR}/src/SplitVector.h"
+        "${scintilla_SOURCE_DIR}/src/Style.cxx"
+        "${scintilla_SOURCE_DIR}/src/Style.h"
+        "${scintilla_SOURCE_DIR}/src/UndoHistory.cxx"
+        "${scintilla_SOURCE_DIR}/src/UndoHistory.h"
+        "${scintilla_SOURCE_DIR}/src/UniConversion.cxx"
+        "${scintilla_SOURCE_DIR}/src/UniConversion.h"
+        "${scintilla_SOURCE_DIR}/src/UniqueString.cxx"
+        "${scintilla_SOURCE_DIR}/src/UniqueString.h"
+        "${scintilla_SOURCE_DIR}/src/ViewStyle.cxx"
+        "${scintilla_SOURCE_DIR}/src/ViewStyle.h"
+        "${scintilla_SOURCE_DIR}/src/XPM.cxx"
+        "${scintilla_SOURCE_DIR}/src/XPM.h"
+    )
+    add_library(markdown_qt_scintilla STATIC ${SCINTILLA_QT_SOURCES})
+    target_include_directories(markdown_qt_scintilla
+        PRIVATE
+            "${scintilla_SOURCE_DIR}/include"
+            "${scintilla_SOURCE_DIR}/src"
+            "${scintilla_SOURCE_DIR}/qt"
+            "${scintilla_SOURCE_DIR}/qt/ScintillaEditBase"
+        PUBLIC
+            "${scintilla_SOURCE_DIR}/include"
+            "${scintilla_SOURCE_DIR}/src"
+            "${scintilla_SOURCE_DIR}/qt/ScintillaEditBase"
+    )
+    target_compile_definitions(markdown_qt_scintilla PRIVATE
+        -DSCINTILLA_QT=1
+        -DMAKING_LIBRARY=1
+        -DSCI_LEXER=1
+        $<$<CONFIG:Debug>:_DEBUG>
+        $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
+    )
+    if(WIN32)
+        target_compile_definitions(markdown_qt_scintilla PRIVATE -D_CRT_SECURE_NO_DEPRECATE=1)
+    endif()
+    target_link_libraries(markdown_qt_scintilla PRIVATE Qt6::Widgets)
+    set_target_properties(markdown_qt_scintilla PROPERTIES AUTOMOC ON)
+endif()
 
 add_library(markdown_qt_core
     src/core/document_backend.cpp

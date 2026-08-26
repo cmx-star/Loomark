@@ -1,0 +1,34 @@
+{
+  "id": "scintilla_direct_integration",
+  "name": "scintilla_direct_integration",
+  "title": "Scintilla 直接集成原型",
+  "description": "批次2 M06：在隔离原型中验证 ScintillaEditBase + Qt6 集成，测试 Qt 事件、IME、选择、撤销和跨平台构建；记录 HPND 许可证合规性。不修改现有 GUI 代码。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": "example",
+  "priority": "P0",
+  "creator": "cmx",
+  "assignee": "cmx",
+  "createdAt": "2026-08-25",
+  "completedAt": null,
+  "branch": "feat/large-file-windowed-gui",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "examples/scintilla_prototype/main.cpp",
+    "CMakeLists.txt"
+  ],
+  "notes": "正在实现隔离原型，验证 ScintillaEditBase + Qt6 集成。",
+  "meta": {
+    "test_count": 0,
+    "ctest_passed": 0,
+    "files_added": 0,
+    "lines_added": 0
+  }
+}
