@@ -12,6 +12,7 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <ScintillaEditBase.h>
 #include <QPushButton>
 #include <QTextBrowser>
 #include <QTextDocument>
@@ -83,6 +84,14 @@ public:
     static int editorCharacterCount(const MainWindow& window)
     {
         return std::max(0, window.editor_->document()->characterCount() - 1);
+    }
+
+    // M09: drive the visible Scintilla editor the way user typing would
+    // (bypassing the backend apply() path).
+    static void appendToEditor(MainWindow& window, std::string_view text)
+    {
+        window.scintillaEditor_->send(SCI_APPENDTEXT, text.size(),
+            reinterpret_cast<Scintilla::sptr_t>(const_cast<char*>(text.data())));
     }
 
     static void shutdown(MainWindow& window)
@@ -224,6 +233,15 @@ void testNormalBackendSaveRoundTrip(
         "normal document must save through the backend");
     require(readWhole(target) == content,
         "backend save must round-trip BOM/CRLF bytes exactly");
+
+    // Edit through the visible editor (user-typing path) and save again.
+    mqt::gui::MainWindowTestAccess::appendToEditor(window, "\n## APPENDED");
+    require(mqt::gui::MainWindowTestAccess::save(window, target),
+        "edited document must save through the backend");
+    const auto edited = readWhole(target);
+    require(edited.rfind("## APPENDED") == edited.size() - 11,
+        "user edit made through the editor must persist on save");
+
     drainBackground(window);
 }
 
