@@ -3,7 +3,7 @@
   "name": "m16_command_system",
   "title": "M16 命令与状态系统",
   "description": "批次4 M16：统一命令注册与按会话/档位/装载状态启停；F03 收口。",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "cmx",
   "assignee": "cmx",
   "createdAt": "2026-08-29",
-  "completedAt": null,
+  "completedAt": "2026-08-29",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -22,5 +22,8 @@
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "completedAt": "2026-08-29",
+    "status": "completed"
+  }
 }
