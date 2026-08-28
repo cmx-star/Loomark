@@ -1,6 +1,6 @@
 # 设计: M09 ScintillaDocumentBackend 正式桌面后端接入
 
-> 前置：D01 获批（docs/m08-backend-decision-draft.md）。本设计为 planning 产物，不含实施代码。
+> 前置：D01 获批（docs/m08-backend-decision.md（已冻结））。本设计为 planning 产物，不含实施代码。
 
 ## 已确认事实
 
@@ -28,8 +28,8 @@ MainWindow ──拥有──> ScintillaEditBase（可见，唯一事实源）
 
 - `version_` 由后端独占维护，初值 `kInitialDocumentVersion`。
 - `apply()` 校验 `baseVersion == snapshot().version`（否则 `StaleVersion`），成功后 `++version_`。
-- 用户键入等**绕过 apply() 的缓冲变更**：后端连接 `modified` 信号，用"自身 apply 执行中"哨兵位区分——非 apply 发起的变更同样 `++version_`（惰性汇总为一次版本跳变即可，快照语义只需要"变了"）。
-- `reload()` 重置缓冲与版本。
+- 用户键入等**绕过 apply() 的缓冲变更**：后端连接 `modified` 信号。实测 Scintilla 一次操作会发 3 类伴随通知（`InsertCheck`/`BeforeInsert`/`StartAction`），只有携带 `InsertText|DeleteText` 标志的才是真实内容修改——按此过滤，一次操作恰好一次版本跳变（直接连接 + `mutatingDocument_` 哨兵，无需队列化）。
+- `reload()` 重置缓冲与版本；程序化装载（`SCI_SETTEXT`）后必须 `SCI_EMPTYUNDOBUFFER`，否则撤销会穿过装载点回到空缓冲。
 
 ### D3 apply() 多编辑：降序局部操作
 

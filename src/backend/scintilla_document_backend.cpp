@@ -1,0 +1,373 @@
+#include "backend/scintilla_document_backend.h"
+
+#include "core/document_file.h"
+#include "core/file_tier.h"
+
+#include <QByteArray>
+
+#include <algorithm>
+#include <deque>
+#include <stdexcept>
+#include <vector>
+
+namespace mqt::backend {
+namespace {
+
+std::vector<std::size_t> buildPrefixTable(std::string_view needle)
+{
+    std::vector<std::size_t> prefix(needle.size(), 0);
+    std::size_t matched = 0;
+    for (std::size_t i = 1; i < needle.size(); ++i) {
+        while (matched > 0 && needle[i] != needle[matched]) {
+            matched = prefix[matched - 1];
+        }
+        if (needle[i] == needle[matched]) {
+            ++matched;
+        }
+        prefix[i] = matched;
+    }
+    return prefix;
+}
+
+// Byte cursor used to keep line/column semantics byte-for-byte identical to
+// FileDocumentBackend (column counts bytes, both 1-based).
+struct Cursor {
+    std::uint64_t offset = 0;
+    std::uint64_t line = 1;
+    std::uint64_t column = 1;
+};
+
+void advanceCursor(Cursor& cursor, unsigned char ch)
+{
+    ++cursor.offset;
+    if (ch == '\n') {
+        ++cursor.line;
+        cursor.column = 1;
+    } else {
+        ++cursor.column;
+    }
+}
+
+struct CursorSample {
+    std::uint64_t offset = 0;
+    mqt::core::TextPosition position {};
+};
+
+} // namespace
+
+ScintillaDocumentBackend::ScintillaDocumentBackend(ScintillaEditBase& editor,
+    const std::filesystem::path& path)
+    : QObject(&editor)
+    , editor_(editor)
+    , path_(path)
+{
+    editor_.send(SCI_SETCODEPAGE, SC_CP_UTF8);
+    loadFromDisk();
+
+    // Direct (same-thread) connection: Scintilla emits `modified`
+    // synchronously during message processing, so the mutatingDocument_
+    // guard is reliable without queueing.
+    connect(&editor_, &ScintillaEditBase::modified,
+        this, &ScintillaDocumentBackend::onEditorModified);
+}
+
+ScintillaDocumentBackend::~ScintillaDocumentBackend() = default;
+
+mqt::core::DocumentSnapshot ScintillaDocumentBackend::snapshot() const
+{
+    return {version_, info_};
+}
+
+mqt::core::DocumentInfo ScintillaDocumentBackend::info() const
+{
+    return info_;
+}
+
+std::string ScintillaDocumentBackend::read(mqt::core::ByteRange range) const
+{
+    const auto sz = range.size();
+    const auto length = static_cast<std::uint64_t>(editor_.send(SCI_GETTEXTLENGTH));
+    if (sz > length || range.start > length - sz) {
+        throw std::out_of_range("byte range exceeds content size");
+    }
+
+    Sci_TextRangeFull rangeFull {};
+    rangeFull.chrg.cpMin = static_cast<Scintilla::sptr_t>(range.start);
+    rangeFull.chrg.cpMax = static_cast<Scintilla::sptr_t>(range.start + sz);
+    std::string out(static_cast<std::size_t>(sz) + 1, '\0');
+    rangeFull.lpstrText = out.data();
+    editor_.send(SCI_GETTEXTRANGEFULL, 0, reinterpret_cast<Scintilla::sptr_t>(&rangeFull));
+    out.resize(static_cast<std::size_t>(sz));
+    return out;
+}
+
+mqt::core::LocateResult ScintillaDocumentBackend::locateLines(mqt::core::ByteRange range) const
+{
+    const auto length = static_cast<std::uint64_t>(editor_.send(SCI_GETTEXTLENGTH));
+    if (range.end > length || range.start > length) {
+        throw std::out_of_range("byte range exceeds content size");
+    }
+
+    // Mirror FileDocumentBackend: offsets at or past the end never resolve
+    // (its byte scan only samples cursor offsets below the content size).
+    if (range.start >= length || range.end >= length) {
+        throw std::runtime_error("failed to locate line positions");
+    }
+
+    const auto toPosition = [&](std::uint64_t offset) {
+        const auto lineIndex = editor_.send(SCI_LINEFROMPOSITION,
+            static_cast<Scintilla::uptr_t>(offset));
+        const auto lineStart = editor_.send(SCI_POSITIONFROMLINE, lineIndex);
+        return mqt::core::TextPosition{
+            .line = static_cast<std::uint64_t>(lineIndex) + 1,
+            .column = offset - static_cast<std::uint64_t>(lineStart) + 1,
+        };
+    };
+    return {toPosition(range.start), toPosition(range.end)};
+}
+
+mqt::core::SearchOutcome ScintillaDocumentBackend::search(const mqt::core::SearchQuery& query,
+    const std::atomic_bool* cancelFlag) const
+{
+    if (query.needle.empty()) {
+        throw std::invalid_argument("search needle cannot be empty");
+    }
+    if (query.options.chunkSize == 0 || query.options.maxResults == 0) {
+        throw std::invalid_argument("search options must be non-zero");
+    }
+
+    // Chunked KMP over the editor buffer; algorithm mirrors
+    // FileDocumentBackend::search so both backends share hit semantics
+    // (bom-adjusted ranges, cursor samples, truncation, cancellation).
+    mqt::core::SearchResult result;
+    const auto prefix = buildPrefixTable(query.needle);
+    std::string buf;
+    buf.resize(query.options.chunkSize);
+    std::size_t matched = 0;
+    Cursor cursor;
+    std::deque<CursorSample> samples;
+    samples.push_back({0, {1, 1}});
+
+    const auto length = static_cast<std::uint64_t>(editor_.send(SCI_GETTEXTLENGTH));
+    Sci_TextRangeFull rangeFull {};
+    std::uint64_t i = 0;
+    while (i < length && !result.truncated) {
+        if (cancelFlag != nullptr && cancelFlag->load(std::memory_order_relaxed)) {
+            return {result, true};
+        }
+        const auto toRead = std::min<std::uint64_t>(query.options.chunkSize, length - i);
+        rangeFull.chrg.cpMin = static_cast<Scintilla::sptr_t>(i);
+        rangeFull.chrg.cpMax = static_cast<Scintilla::sptr_t>(i + toRead);
+        rangeFull.lpstrText = buf.data();
+        editor_.send(SCI_GETTEXTRANGEFULL, 0, reinterpret_cast<Scintilla::sptr_t>(&rangeFull));
+        i += toRead;
+
+        for (std::uint64_t j = 0; j < toRead; ++j) {
+            const unsigned char ch = static_cast<unsigned char>(buf[static_cast<std::size_t>(j)]);
+            samples.push_back({cursor.offset, {cursor.line, cursor.column}});
+            bool stopAfterCurrentByte = false;
+
+            while (matched > 0 && ch != static_cast<unsigned char>(query.needle[matched])) {
+                matched = prefix[matched - 1];
+            }
+            if (ch == static_cast<unsigned char>(query.needle[matched])) {
+                ++matched;
+            }
+
+            const auto startLimit = cursor.offset >= query.needle.size()
+                ? cursor.offset - query.needle.size() + 1 : 0;
+            while (!samples.empty() && samples.front().offset < startLimit) {
+                samples.pop_front();
+            }
+
+            if (matched == query.needle.size()) {
+                if (result.hits.size() >= query.options.maxResults) {
+                    result.truncated = true;
+                    stopAfterCurrentByte = true;
+                } else {
+                    if (samples.empty() || samples.front().offset != startLimit) {
+                        throw std::runtime_error("search cursor alignment lost");
+                    }
+                    result.hits.push_back(mqt::core::SearchHit{
+                        .sourceRange = {startLimit + bomOffset_, cursor.offset + 1 + bomOffset_},
+                        .position = samples.front().position,
+                    });
+                    matched = prefix[matched - 1];
+                }
+            }
+
+            advanceCursor(cursor, ch);
+            if (stopAfterCurrentByte) {
+                break;
+            }
+        }
+    }
+
+    result.bytesScanned = cursor.offset;
+    return {result, false};
+}
+
+mqt::core::ApplyResult ScintillaDocumentBackend::apply(std::vector<mqt::core::TextEdit> edits,
+    mqt::core::DocumentVersion baseVersion,
+    const std::atomic_bool* cancelFlag)
+{
+    (void)cancelFlag;
+    if (baseVersion != version_) {
+        return {mqt::core::ApplyError::StaleVersion, version_};
+    }
+
+    if (edits.empty()) {
+        return {mqt::core::ApplyError::None, version_};
+    }
+
+    const auto length = static_cast<std::uint64_t>(editor_.send(SCI_GETTEXTLENGTH));
+    std::uint64_t prevEnd = 0;
+    for (const auto& edit : edits) {
+        if (edit.start > edit.end) {
+            return {mqt::core::ApplyError::RangeInvalid, version_};
+        }
+        if (edit.end > length) {
+            return {mqt::core::ApplyError::RangeInvalid, version_};
+        }
+        if (edit.start < prevEnd) {
+            return {mqt::core::ApplyError::OverlappingEdits, version_};
+        }
+        prevEnd = edit.end;
+    }
+
+    mutatingDocument_ = true;
+    editor_.send(SCI_BEGINUNDOACTION);
+    // Descending application keeps earlier offsets valid without remapping.
+    for (auto it = edits.rbegin(); it != edits.rend(); ++it) {
+        if (it->end > it->start) {
+            editor_.send(SCI_DELETERANGE,
+                static_cast<Scintilla::uptr_t>(it->start),
+                static_cast<Scintilla::sptr_t>(it->end - it->start));
+        }
+        if (!it->newText.empty()) {
+            editor_.send(SCI_INSERTTEXT,
+                static_cast<Scintilla::uptr_t>(it->start),
+                reinterpret_cast<Scintilla::sptr_t>(const_cast<char*>(it->newText.c_str())));
+        }
+    }
+    editor_.send(SCI_ENDUNDOACTION);
+    mutatingDocument_ = false;
+
+    info_.sizeBytes = static_cast<std::uint64_t>(editor_.send(SCI_GETTEXTLENGTH));
+    ++version_;
+    return {mqt::core::ApplyError::None, version_};
+}
+
+void ScintillaDocumentBackend::save(const std::atomic_bool*)
+{
+    saveTo(path_);
+}
+
+void ScintillaDocumentBackend::saveAs(const std::filesystem::path& path)
+{
+    path_ = path;
+    saveTo(path_);
+}
+
+mqt::core::DocumentSnapshot ScintillaDocumentBackend::reload()
+{
+    loadFromDisk();
+    ++version_;
+    return snapshot();
+}
+
+void ScintillaDocumentBackend::onEditorModified(Scintilla::ModificationFlags type)
+{
+    if (mutatingDocument_) {
+        return;
+    }
+    using Fl = Scintilla::ModificationFlags;
+    const bool contentChanged = (type & Fl::InsertText) != Fl(0) ||
+                                (type & Fl::DeleteText) != Fl(0);
+    if (contentChanged) {
+        ++version_;
+    }
+}
+
+void ScintillaDocumentBackend::loadFromDisk()
+{
+    std::error_code ec;
+    const auto fileSize = std::filesystem::file_size(path_, ec);
+    if (ec) {
+        throw std::runtime_error("failed to read file size: " + path_.string());
+    }
+    if (mqt::core::classifyDesktopFile(fileSize) != mqt::core::FileTier::Normal) {
+        throw std::runtime_error("file exceeds Normal tier limit: " + path_.string());
+    }
+
+    std::string raw = mqt::core::readRange(path_, {0, fileSize});
+    bomOffset_ = 0;
+    if (raw.size() >= 3 &&
+        static_cast<unsigned char>(raw[0]) == 0xEF &&
+        static_cast<unsigned char>(raw[1]) == 0xBB &&
+        static_cast<unsigned char>(raw[2]) == 0xBF) {
+        bomOffset_ = 3;
+        raw.erase(0, 3);
+    }
+
+    setDocumentText(raw);
+    info_.tier = mqt::core::FileTier::Normal;
+    info_.sizeBytes = raw.size();
+    info_.hasUtf8Bom = bomOffset_ > 0;
+    info_.newlineStyle = mqt::core::NewlineStyle::None;
+    info_.newlineStyleKnown = false;
+}
+
+void ScintillaDocumentBackend::saveTo(const std::filesystem::path& path)
+{
+    const auto length = static_cast<std::uint64_t>(editor_.send(SCI_GETTEXTLENGTH));
+    const auto dir = path.parent_path().empty()
+        ? std::filesystem::current_path()
+        : path.parent_path();
+    const auto freeBytes = mqt::core::availableDiskBytes(dir);
+    const auto needed = length + (info_.hasUtf8Bom ? 3ULL : 0ULL) + 2ULL * mqt::core::kMiB;
+    if (freeBytes < needed) {
+        throw std::runtime_error("insufficient disk space to save document");
+    }
+
+    mqt::core::AtomicFileWriter writer(path);
+    if (info_.hasUtf8Bom) {
+        writer.write("\xEF\xBB\xBF");
+    }
+    // Chunked extraction: never materialize a second full copy of the body.
+    constexpr std::uint64_t kChunk = 8ULL * mqt::core::kMiB;
+    Sci_TextRangeFull rangeFull {};
+    std::string buf;
+    for (std::uint64_t start = 0; start < length;) {
+        const auto toRead = std::min<std::uint64_t>(kChunk, length - start);
+        buf.resize(static_cast<std::size_t>(toRead) + 1);
+        rangeFull.chrg.cpMin = static_cast<Scintilla::sptr_t>(start);
+        rangeFull.chrg.cpMax = static_cast<Scintilla::sptr_t>(start + toRead);
+        rangeFull.lpstrText = buf.data();
+        const auto got = editor_.send(SCI_GETTEXTRANGEFULL, 0,
+            reinterpret_cast<Scintilla::sptr_t>(&rangeFull));
+        if (got <= 0) {
+            throw std::runtime_error("failed to extract document content");
+        }
+        writer.write(std::string_view(buf.data(), static_cast<std::size_t>(got)));
+        start += static_cast<std::uint64_t>(got);
+    }
+    writer.commit();
+    info_.sizeBytes = length + (info_.hasUtf8Bom ? 3ULL : 0ULL);
+}
+
+void ScintillaDocumentBackend::setDocumentText(const std::string& bytes)
+{
+    if (bytes.find('\0') != std::string::npos) {
+        throw std::runtime_error("embedded NUL bytes are outside the P0 document contract");
+    }
+    mutatingDocument_ = true;
+    editor_.send(SCI_SETTEXT, 0,
+        reinterpret_cast<sptr_t>(const_cast<char*>(bytes.c_str())));
+    // A freshly loaded document has no undo history: without this, SCI_UNDO
+    // could rewind past the load itself into an empty buffer.
+    editor_.send(SCI_EMPTYUNDOBUFFER);
+    mutatingDocument_ = false;
+}
+
+} // namespace mqt::backend

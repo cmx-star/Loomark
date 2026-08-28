@@ -291,6 +291,48 @@ if(MQT_BUILD_SCINTILLA_EXAMPLE AND scintilla_POPULATED)
             $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
     )
     set_target_properties(markdown_qt_scintilla_bench PROPERTIES AUTOMOC ON)
+
+    # M09: ScintillaDocumentBackend — IDocumentBackend 实现包装可见编辑器实例
+    add_library(markdown_qt_backend
+        src/backend/scintilla_document_backend.cpp
+    )
+    target_link_libraries(markdown_qt_backend
+        PUBLIC
+            markdown_qt_core
+            markdown_qt_scintilla
+        PRIVATE
+            Qt6::Widgets
+    )
+    target_compile_definitions(markdown_qt_backend PRIVATE
+        -DSCINTILLA_QT=1
+        $<$<CONFIG:Debug>:_DEBUG>
+        $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
+    )
+    set_target_properties(markdown_qt_backend PROPERTIES AUTOMOC ON)
+    target_compile_options(markdown_qt_backend
+        PRIVATE
+            $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+    )
+
+    add_executable(markdown_qt_scintilla_backend_tests
+        tests/scintilla_document_backend_tests.cpp
+    )
+    target_link_libraries(markdown_qt_scintilla_backend_tests
+        PRIVATE
+            markdown_qt_backend
+            Qt6::Widgets
+    )
+    target_compile_definitions(markdown_qt_scintilla_backend_tests PRIVATE
+        -DSCINTILLA_QT=1
+        $<$<CONFIG:Debug>:_DEBUG>
+        $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
+    )
+    set_target_properties(markdown_qt_scintilla_backend_tests PROPERTIES AUTOMOC ON)
+    add_test(NAME markdown_qt_scintilla_backend_tests
+        COMMAND markdown_qt_scintilla_backend_tests)
+    set_tests_properties(markdown_qt_scintilla_backend_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 endif()
 
 add_library(markdown_qt_core

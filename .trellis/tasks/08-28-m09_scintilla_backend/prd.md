@@ -4,7 +4,7 @@
 
 批次3 M09：实现 `ScintillaDocumentBackend` 实现 `IDocumentBackend` 契约，接入 GUI，正文只保留一个事实源（Scintilla 字节缓冲），消除 UI 第二份完整字符串副本。
 
-**启动前置条件：D01 决策获批（`docs/m08-backend-decision-draft.md`）。在获批前本任务保持 planning，不进入实施。**
+**启动前置条件：D01 决策获批（`docs/m08-backend-decision.md`）。在获批前本任务保持 planning，不进入实施。**
 
 ## Requirements
 
