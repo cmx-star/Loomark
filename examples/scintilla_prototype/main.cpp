@@ -12,6 +12,7 @@
 #include <QTextBrowser>
 #include <QStatusBar>
 #include <QMessageBox>
+#include <QScrollBar>
 #include <QDebug>
 #include <string>
 
@@ -48,12 +49,11 @@ public:
 
         // --- Scintilla editor ---
         editor_ = new ScintillaEditBase(this);
-        editor_->send(SCI_SETVIEWWS, SC_WS_VISIBLEALWAYS, 0);
-        editor_->send(SCI_SETCODEPAGE, CP_UTF8);
+        editor_->send(SCI_SETVIEWWS, SCWS_VISIBLEALWAYS, 0);
+        editor_->send(SCI_SETCODEPAGE, SC_CP_UTF8);
         editor_->send(SCI_SETWRAPMODE, SC_WRAP_WORD);
-        editor_->send(SCI_SETUSETAB, 0);
+        editor_->send(SCI_SETUSETABS, 0);
         editor_->send(SCI_SETTABWIDTH, 4);
-        editor_->send(SCI_SETCARETSTRICT, true);
 
         // Connect signals
         connect(editor_, &ScintillaEditBase::savePointChanged,
@@ -142,8 +142,13 @@ private slots:
     void onModified(ModificationFlags type, Position position, Position length,
                      Position linesAdded, const QByteArray &text,
                      Position line, FoldLevel foldNow, FoldLevel foldPrev) {
-        bool isInsert = (type & SC_MOD_INSERTTEXT) != 0;
-        bool isDelete = (type & SC_MOD_DELETETEXT) != 0;
+        Q_UNUSED(linesAdded);
+        Q_UNUSED(text);
+        Q_UNUSED(line);
+        Q_UNUSED(foldNow);
+        Q_UNUSED(foldPrev);
+        bool isInsert = (type & ModificationFlags::InsertText) != static_cast<ModificationFlags>(0);
+        bool isDelete = (type & ModificationFlags::DeleteText) != static_cast<ModificationFlags>(0);
         QString action = isInsert ? "插入" : (isDelete ? "删除" : "其他");
         appendLog(QString("[信号] modified(type=%1 pos=%2 len=%3)")
                   .arg(action).arg(position).arg(length));

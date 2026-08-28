@@ -43,13 +43,15 @@ M05 已完成 `IDocumentBackend` 契约定义，为后续正式后端决策提�
 
 ## 验收条件
 
-- [ ] 原型可编译并通过 `clang++`/`g++`/`msvc` 至少一种编译器构建
-- [ ] macOS 上可运行，显示编辑界面
-- [ ] 基本编辑操作（输入文字、选中、撤销 Ctrl+Z）在工作
-- [ ] 输入法事件能被接收（inputMethodEvent 被调用）
-- [ ] `scintilla-qt.cmake` 中所有源文件被正确收集
-- [ ] 许可证文件（License.txt）路径已记录
-- [ ] 不引入任何 QScintilla 依赖
+- [x] 原型可编译并通过 `clang++`/`g++`/`msvc` 至少一种编译器构建（AppleClang，见 verification.md）
+- [x] macOS 上可运行，显示编辑界面（主窗口创建，事件循环稳定；本环境无显示器捕获，人工视觉项以无障碍窗口列表 + offscreen 自动化替代）
+- [x] 基本编辑操作（输入文字、选中、撤销 Ctrl+Z）在工作（冒烟测试 10/10）
+- [x] 输入法事件能被接收（inputMethodEvent 被调用，中文提交串落入缓冲）
+- [x] `scintilla-qt.cmake` 中所有源文件被正确收集（采用 design.md 方式 B：主 CMakeLists 显式收集，编译链接通过证明完整）
+- [x] 许可证文件（License.txt）路径已记录（verification.md）
+- [x] 不引入任何 QScintilla 依赖
+
+残余项：Windows/Linux 构建验证（CI 项）；真实 IME 候选窗与鼠标拖拽人工实测（本环境限制，见 verification.md 边界说明）。
 
 ## 非目标
 

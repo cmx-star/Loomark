@@ -37,6 +37,17 @@ public:
 
     QByteArray fromUnicode(const QString &s) const { return s.toUtf8(); }
 
+    // ScintillaQt::CaseFolderDBCS 用 canEncode 判断折叠结果能否无损落回
+    // 文档编码；垫片按 UTF-8 处理时 QString 恒可编码。
+    bool canEncode(const QString &s) const {
+        Q_UNUSED(s);
+        return true;
+    }
+    bool canEncode(QChar c) const {
+        Q_UNUSED(c);
+        return true;
+    }
+
 private:
     QTextCodec() = default;
 };

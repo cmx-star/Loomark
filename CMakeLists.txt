@@ -234,6 +234,63 @@ if(MQT_BUILD_SCINTILLA_EXAMPLE AND scintilla_POPULATED)
     endif()
     target_link_libraries(markdown_qt_scintilla PRIVATE Qt6::Widgets)
     set_target_properties(markdown_qt_scintilla PROPERTIES AUTOMOC ON)
+
+    add_executable(markdown_qt_scintilla_prototype
+        examples/scintilla_prototype/main.cpp
+    )
+    target_link_libraries(markdown_qt_scintilla_prototype
+        PRIVATE
+            markdown_qt_scintilla
+            Qt6::Widgets
+    )
+    target_compile_definitions(markdown_qt_scintilla_prototype
+        PRIVATE
+            -DSCINTILLA_QT=1
+            $<$<CONFIG:Debug>:_DEBUG>
+            $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
+    )
+    set_target_properties(markdown_qt_scintilla_prototype PROPERTIES AUTOMOC ON)
+    target_compile_options(markdown_qt_scintilla_prototype
+        PRIVATE
+            $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+    )
+
+    add_executable(markdown_qt_scintilla_smoke
+        examples/scintilla_prototype/prototype_smoke.cpp
+    )
+    target_link_libraries(markdown_qt_scintilla_smoke
+        PRIVATE
+            markdown_qt_scintilla
+            Qt6::Widgets
+            Qt6::Test
+    )
+    target_compile_definitions(markdown_qt_scintilla_smoke
+        PRIVATE
+            -DSCINTILLA_QT=1
+            $<$<CONFIG:Debug>:_DEBUG>
+            $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
+    )
+    set_target_properties(markdown_qt_scintilla_smoke PROPERTIES AUTOMOC ON)
+    add_test(NAME markdown_qt_scintilla_smoke COMMAND markdown_qt_scintilla_smoke)
+    set_tests_properties(markdown_qt_scintilla_smoke PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(markdown_qt_scintilla_bench
+        examples/scintilla_prototype/backend_bench.cpp
+    )
+    target_link_libraries(markdown_qt_scintilla_bench
+        PRIVATE
+            markdown_qt_scintilla
+            Qt6::Widgets
+    )
+    target_compile_definitions(markdown_qt_scintilla_bench
+        PRIVATE
+            -DSCINTILLA_QT=1
+            $<$<CONFIG:Debug>:_DEBUG>
+            $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
+    )
+    set_target_properties(markdown_qt_scintilla_bench PROPERTIES AUTOMOC ON)
 endif()
 
 add_library(markdown_qt_core
@@ -253,7 +310,7 @@ target_compile_options(markdown_qt_core
         $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
 )
 
-find_package(Qt6 COMPONENTS Network Widgets Svg REQUIRED)
+find_package(Qt6 COMPONENTS Network Widgets Svg Test REQUIRED)
 
 set(MQT_APP_VERSION "${PROJECT_VERSION}" CACHE STRING "Application version displayed in the GUI and update checks.")
 if(DEFINED ENV{GITHUB_REF_NAME})
