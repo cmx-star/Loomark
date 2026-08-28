@@ -109,3 +109,22 @@ D01 决策按用户「推进项目整体到整体完成」指令以默认批准�
 ### Status
 
 [OK] **M10 完成。下一步 M11：大文件搜索替换**
+
+
+## Session 5: M11 分批搜索替换完成
+
+**Date**: 2026-08-29
+**Task**: 08-29-m11_batched_search_replace
+**Branch**: `feat/large-file-windowed-gui`
+
+### Summary
+
+searchBatch 分批搜索（上限/超时/取消）+ applyReplace 32MiB 确认门 + GUI 查找/替换栏。300MB 搜索 6 批 39960 命中 5ms，取消立即返回。
+
+### Testing
+
+- [OK] 契约测试新增 6 用例；ctest 9/9；clean 构建 0 警告；diff-check 通过
+
+### Status
+
+[OK] **M11 完成。下一步 M12：流式保存与撤销预算 → F02**
