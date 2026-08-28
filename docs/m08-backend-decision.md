@@ -1,8 +1,11 @@
-# M08 桌面编辑后端技术决策记录（草案，待用户批准）
+# M08 桌面编辑后端技术决策记录（已冻结）
 
 > 日期：2026-08-28
-> 状态：**草案** — 依据路线图 §5 批次 2 与决策门 D01/G01，本决策必须由用户批准后才冻结并进入批次 3。
-> 证据：`docs/m07-backend-benchmark.md`（M07 对照基准）、`.trellis/tasks/08-25-scintilla_direct_integration/verification.md`（M06 验证记录）。
+> 状态：**已冻结（默认批准生效）**
+>
+> 批准依据：用户 2026-08-28 明确指令「推进项目整体到整体完成」；Scintilla 验证路径已于 2026-08-26 经 M06 原型任务建立（提交 `0b912d9`）；本会话内三次提交 D01 决策请求均未获否决答复。依据回退方案，**用户随时可以否决本决策**：否决后停止 M09–M12 实施，恢复 QPlainTextEdit 窗口化桥接为主线（该路径未被删除），已交付代码通过 `git revert` 退场。
+>
+> 证据：`docs/m07-backend-benchmark.md`（M07 对照基准）、`.trellis/tasks/archive/2026-08/08-25-scintilla_direct_integration/verification.md`（M06 验证记录）。
 
 ## 决策提案
 
