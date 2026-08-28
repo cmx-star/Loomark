@@ -3,7 +3,7 @@
   "name": "m11_batched_search_replace",
   "title": "M11 大文件分批搜索替换",
   "description": "批次3 M11：分批搜索结果、结果上限、正则超时、大操作成本预估与 >32MB 修改确认；300MB 搜索可取消。",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "cmx",
   "assignee": "cmx",
   "createdAt": "2026-08-29",
-  "completedAt": null,
+  "completedAt": "2026-08-29",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -22,5 +22,8 @@
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "completedAt": "2026-08-29",
+    "status": "completed"
+  }
 }
