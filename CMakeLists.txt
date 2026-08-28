@@ -418,6 +418,8 @@ target_link_libraries(markdown_qt_p0
 
 add_executable(markdown_qt_gui
     resources/resources.qrc
+    src/gui/document_session.h
+    src/gui/document_session.cpp
     src/gui/application_logger.h
     src/gui/application_logger.cpp
     src/gui/file_inspect_worker.h
@@ -621,6 +623,8 @@ add_executable(markdown_qt_main_window_tests
     resources/resources.qrc
     src/gui/application_logger.h
     src/gui/application_logger.cpp
+    src/gui/document_session.h
+    src/gui/document_session.cpp
     src/gui/file_inspect_worker.h
     src/gui/file_inspect_worker.cpp
     src/gui/main_window.h

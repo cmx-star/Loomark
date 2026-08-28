@@ -2,6 +2,7 @@
 
 #include "backend/scintilla_document_backend.h"
 #include "gui/application_logger.h"
+#include "gui/document_session.h"
 #include "gui/file_inspect_worker.h"
 #include "gui/markdown_document_renderer.h"
 #include "gui/preview_index_worker.h"
@@ -315,19 +316,9 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
     editor_->setTabStopDistance(editor_->fontMetrics().horizontalAdvance(QLatin1Char(' ')) * 4);
     editor_->document()->setDocumentMargin(18);
 
-    // M09: Normal tier edits through the Scintilla backend; the legacy
-    // QPlainTextEdit stays for the windowed large-file path.
-    scintillaEditor_ = new ScintillaEditBase(splitter);
-    scintillaEditor_->setFrameShape(QFrame::NoFrame);
-    scintillaEditor_->setFont(editorFont());
-    scintillaEditor_->send(SCI_SETCODEPAGE, SC_CP_UTF8);
-    scintillaEditor_->send(SCI_SETTABWIDTH, 4);
-    scintillaEditor_->send(SCI_SETMARGINWIDTHN, 1, 0);
-    scintillaEditor_->send(SCI_SETWRAPMODE, SC_WRAP_WORD);
-    scintillaEditor_->send(SCI_SETUNDOCOLLECTION, 1);
-
+    // M13: session editors join the stack when a document opens; page 0 is
+    // the legacy QPlainTextEdit (empty state + windowed large-file path).
     editorStack_ = new QStackedWidget(splitter);
-    editorStack_->addWidget(scintillaEditor_);
     editorStack_->addWidget(editor_);
 
     preview_->setFrameShape(QFrame::NoFrame);
@@ -387,28 +378,6 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
         updateStatusBar();
     });
     connect(editor_->verticalScrollBar(), &QScrollBar::valueChanged, this, [this] {
-        syncPreviewWithEditorScroll();
-        updateStatusBar();
-    });
-    connect(scintillaEditor_, &ScintillaEditBase::modified, this,
-        [this](Scintilla::ModificationFlags type) {
-            using Fl = Scintilla::ModificationFlags;
-            const bool contentChanged = (type & Fl::InsertText) != Fl(0) ||
-                                        (type & Fl::DeleteText) != Fl(0);
-            if (!contentChanged) {
-                return;
-            }
-            dirty_ = true;
-            updateWindowState();
-            updateStatusBar();
-            if (previewTimer_ && !largeMode_) {
-                previewTimer_->start();
-            }
-        });
-    connect(scintillaEditor_, &ScintillaEditBase::updateUi, this, [this](Scintilla::Update) {
-        updateStatusBar();
-    });
-    connect(scintillaEditor_->verticalScrollBar(), &QScrollBar::valueChanged, this, [this] {
         syncPreviewWithEditorScroll();
         updateStatusBar();
     });
@@ -686,31 +655,38 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
                 : QStringLiteral("大文件（64 ~ 256 MiB）");
             const QString body = QStringLiteral("将以%1打开：\n\n• 关闭自动折行\n• 编辑器按 2 MiB 窗口加载（“窗口”菜单切换）\n• 预览基于后台索引，反映已保存内容\n\n确定打开吗？")
                 .arg(extreme ? QStringLiteral("受限模式") : QStringLiteral("大文件模式"));
+            qInfo() << "LDQ question-before";
             const auto choice = QMessageBox::question(this, headline, body,
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+            qInfo() << "LDQ question-after";
             if (choice != QMessageBox::Yes) {
                 return false;
             }
         }
 
+        qInfo() << "LD1 finishInspect";
         finishInspectThread();
         ++previewGeneration_;
         indexedPreviewPending_ = false;
         if (indexThread_) {
             indexThread_->cancel();
         }
-        releaseDocumentBackend();
+        qInfo() << "LD2 closeActiveSession";
+        closeActiveSession();
         largeMode_ = nextLargeMode;
         setCurrentPath(path, info);
         ++documentGeneration_;
+        qInfo() << "LD3 applyTierUiMode";
         applyTierUiMode();
 
+        qInfo() << "LD4 branch";
         if (!largeMode_) {
-            // Normal tier: the Scintilla backend owns the fact source.
-            // Files above the threshold stream in through the background
-            // chunked loader; the UI stays responsive meanwhile.
-            documentBackend_ = new mqt::backend::ScintillaDocumentBackend(*scintillaEditor_);
-            connect(documentBackend_, &mqt::backend::ScintillaDocumentBackend::loadProgress,
+            // Normal tier: a fresh session owns the editor + backend. Files
+            // above the threshold stream in through the background chunked
+            // loader; the UI stays responsive meanwhile.
+            activeSession_ = new DocumentSession(++documentGeneration_, this);
+            editorStack_->addWidget(&activeSession_->editor());
+            connect(activeSession_, &DocumentSession::loadProgress,
                 this, [this](std::uint64_t loaded, std::uint64_t total) {
                     const int percent = total == 0
                         ? 100
@@ -718,12 +694,20 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
                     statusBar()->showMessage(
                         QStringLiteral("装载中 %1%").arg(percent));
                 });
-            connect(documentBackend_, &mqt::backend::ScintillaDocumentBackend::undoBudgetExceeded,
+            connect(activeSession_, &DocumentSession::undoBudgetExceeded,
                 this, [this] {
                     statusBar()->showMessage(
                         QStringLiteral("撤销历史已达内存预算，已清空撤销记录"), 4000);
                 });
-            connect(documentBackend_, &mqt::backend::ScintillaDocumentBackend::loadFinished,
+            connect(activeSession_, &DocumentSession::contentsChanged, this, [this] {
+                dirty_ = true;
+                updateWindowState();
+                updateStatusBar();
+                if (previewTimer_ && !largeMode_) {
+                    previewTimer_->start();
+                }
+            });
+            connect(activeSession_, &DocumentSession::loadFinished,
                 this, [this](bool ok, const QString& error) {
                     Q_UNUSED(error);
                     backgroundLoadPending_ = false;
@@ -742,12 +726,14 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
                 });
             if (info.sizeBytes > kBackgroundLoadThreshold) {
                 backgroundLoadPending_ = true;
-                documentBackend_->startBackgroundLoad(path);
+                qInfo() << "LD5 openBackground";
+            activeSession_->openBackground(path);
             } else {
-                documentBackend_->openSync(path);
+                activeSession_->openSync(path);
             }
             windowStart_ = 0;
             windowEnd_ = info.sizeBytes;
+        qInfo() << "LD6 windowed";
         } else if (!readWindow(0)) {
             QMessageBox::critical(this, QStringLiteral("打开失败"), QStringLiteral("无法读取文件内容。"));
             return false;
@@ -830,7 +816,7 @@ void MainWindow::refreshPreview()
 
 void MainWindow::syncPreviewWithEditorScroll()
 {
-    if (windowed()) {
+    if (windowed() || activeSession_ == nullptr) {
         // Indexed preview reflects the saved document; no scroll coupling.
         return;
     }
@@ -843,7 +829,7 @@ void MainWindow::syncPreviewWithEditorScroll()
         return;
     }
 
-    auto* editorScroll = scintillaEditor_->verticalScrollBar();
+    auto* editorScroll = activeSession_->editor().verticalScrollBar();
     auto* previewScroll = preview_->verticalScrollBar();
     if (editorScroll->maximum() <= 0 || previewScroll->maximum() <= 0) {
         return;
@@ -858,12 +844,15 @@ QString MainWindow::collectPreviewText()
 {
     // Normal tier runs on Scintilla; the windowed tier never reaches here
     // (refreshPreview routes it to the indexed preview).
-    const auto length = static_cast<std::int64_t>(scintillaEditor_->send(SCI_GETTEXTLENGTH));
+    if (activeSession_ == nullptr) {
+        return QString();
+    }
+    const auto length = static_cast<std::int64_t>(activeSession_->editor().send(SCI_GETTEXTLENGTH));
     if (length <= kFullPreviewCharLimit) {
         previewStartLine_ = 1;
-        previewEndLine_ = static_cast<int>(scintillaEditor_->send(SCI_GETLINECOUNT));
+        previewEndLine_ = static_cast<int>(activeSession_->editor().send(SCI_GETLINECOUNT));
         std::string all(static_cast<std::size_t>(length) + 1, '\0');
-        scintillaEditor_->send(SCI_GETTEXT, length + 1,
+        activeSession_->editor().send(SCI_GETTEXT, length + 1,
             reinterpret_cast<sptr_t>(all.data()));
         all.resize(static_cast<std::size_t>(length));
         return QString::fromUtf8(all.data(), static_cast<int>(all.size()));
@@ -873,8 +862,8 @@ QString MainWindow::collectPreviewText()
     // state is scanned from the document start, bounded to the first 20k
     // lines (an unclosed fence opened before that bound may render as open
     // text; recorded as a known M09 limitation).
-    const auto firstLine = scintillaEditor_->send(SCI_GETFIRSTVISIBLELINE);
-    const auto lineCount = scintillaEditor_->send(SCI_GETLINECOUNT);
+    const auto firstLine = activeSession_->editor().send(SCI_GETFIRSTVISIBLELINE);
+    const auto lineCount = activeSession_->editor().send(SCI_GETLINECOUNT);
     previewStartLine_ = static_cast<int>(firstLine) + 1;
 
     bool fenceOpen = false;
@@ -882,16 +871,16 @@ QString MainWindow::collectPreviewText()
     const sptr_t fenceScanEnd = std::min<sptr_t>(firstLine, kFenceScanBound);
     std::string lineBuf;
     for (sptr_t i = 0; i < fenceScanEnd; ++i) {
-        lineBuf.resize(static_cast<std::size_t>(scintillaEditor_->send(SCI_LINELENGTH, i)));
-        scintillaEditor_->send(SCI_GETLINE, i, reinterpret_cast<sptr_t>(lineBuf.data()));
+        lineBuf.resize(static_cast<std::size_t>(activeSession_->editor().send(SCI_LINELENGTH, i)));
+        activeSession_->editor().send(SCI_GETLINE, i, reinterpret_cast<sptr_t>(lineBuf.data()));
         if (isFenceLine(QStringView(QString::fromUtf8(lineBuf.data(), static_cast<int>(lineBuf.size()))))) {
             fenceOpen = !fenceOpen;
         }
     }
     // Drop the trailing newline Scintilla includes in SCI_GETLINE text.
     auto lineText = [&](sptr_t i) {
-        lineBuf.resize(static_cast<std::size_t>(scintillaEditor_->send(SCI_LINELENGTH, i)));
-        scintillaEditor_->send(SCI_GETLINE, i, reinterpret_cast<sptr_t>(lineBuf.data()));
+        lineBuf.resize(static_cast<std::size_t>(activeSession_->editor().send(SCI_LINELENGTH, i)));
+        activeSession_->editor().send(SCI_GETLINE, i, reinterpret_cast<sptr_t>(lineBuf.data()));
         while (!lineBuf.empty() && (lineBuf.back() == '\n' || lineBuf.back() == '\r')) {
             lineBuf.pop_back();
         }
@@ -933,7 +922,7 @@ bool MainWindow::writeCurrentDocument(const std::filesystem::path& path)
         // make sure the background classification finished before writing.
         completeInspection();
 
-        if (documentBackend_ != nullptr && documentBackend_->isLoadInProgress()) {
+        if (activeSession_ != nullptr && activeSession_->isLoadInProgress()) {
             statusBar()->showMessage(QStringLiteral("装载中，暂不能保存"), 2000);
             return false;
         }
@@ -942,13 +931,13 @@ bool MainWindow::writeCurrentDocument(const std::filesystem::path& path)
             // Normal tier: the backend streams the Scintilla buffer to the
             // temp file and commits the atomic replace; no second full copy
             // of the document is materialized on the UI side.
-            if (documentBackend_ == nullptr) {
+            if (activeSession_ == nullptr || !activeSession_->hasBackend()) {
                 throw std::runtime_error("no document backend for the current file");
             }
             if (!currentPath_.empty() && path == currentPath_) {
-                documentBackend_->save();
+                activeSession_->save();
             } else {
-                documentBackend_->saveAs(path);
+                activeSession_->saveAs(path);
             }
             auto info = mqt::core::statFile(path);
             info.newlineStyle = currentInfo_.newlineStyle;
@@ -1029,8 +1018,8 @@ bool MainWindow::writeCurrentDocument(const std::filesystem::path& path)
 void MainWindow::updateWindowState()
 {
     setWindowTitle(makeTitle(currentPath_, dirty_));
-    const bool loadPending = documentBackend_ != nullptr &&
-        documentBackend_->isLoadInProgress();
+    const bool loadPending = activeSession_ != nullptr &&
+        activeSession_->isLoadInProgress();
     saveAction_->setEnabled(dirty_ && !loadPending);
     reloadAction_->setEnabled(!currentPath_.empty());
     if (windowMenu_) {
@@ -1135,7 +1124,7 @@ void MainWindow::toggleFindBar()
 
 void MainWindow::findNext()
 {
-    if (largeMode_ || documentBackend_ == nullptr) {
+    if (largeMode_ || activeSession_ == nullptr) {
         return;
     }
     const std::string needle = findEdit_->text().toStdString();
@@ -1150,15 +1139,15 @@ void MainWindow::findNext()
     req.maxResults = 1;
     req.maxWindow = 8ULL << 20;
     req.startOffset = static_cast<std::uint64_t>(
-        scintillaEditor_->send(SCI_GETCURRENTPOS));
+        activeSession_->editor().send(SCI_GETCURRENTPOS));
 
-    auto r = documentBackend_->searchBatch(req, &findCancelled_);
+    auto r = activeSession_->backend().searchBatch(req, &findCancelled_);
     if (r.cancelled) {
         return;
     }
     if (r.hits.empty() && !r.timeout && req.startOffset > 0) {
         req.startOffset = 0; // wrap around
-        r = documentBackend_->searchBatch(req, &findCancelled_);
+        r = activeSession_->backend().searchBatch(req, &findCancelled_);
     }
     if (r.hits.empty()) {
         findStatusLabel_->setText(QStringLiteral("未找到"));
@@ -1168,15 +1157,15 @@ void MainWindow::findNext()
         findStatusLabel_->setText(QStringLiteral("搜索超时，已停在文档较前位置"));
     }
     const auto hit = r.hits.front();
-    scintillaEditor_->send(SCI_SETSELECTIONSTART, static_cast<uptr_t>(hit.sourceRange.start));
-    scintillaEditor_->send(SCI_SETSELECTIONEND, static_cast<uptr_t>(hit.sourceRange.end));
+    activeSession_->editor().send(SCI_SETSELECTIONSTART, static_cast<uptr_t>(hit.sourceRange.start));
+    activeSession_->editor().send(SCI_SETSELECTIONEND, static_cast<uptr_t>(hit.sourceRange.end));
     findStatusLabel_->setText(QStringLiteral("命中 行 %1 列 %2")
         .arg(hit.position.line).arg(hit.position.column));
 }
 
 void MainWindow::replaceAll()
 {
-    if (largeMode_ || documentBackend_ == nullptr) {
+    if (largeMode_ || activeSession_ == nullptr) {
         return;
     }
     const std::string needle = findEdit_->text().toStdString();
@@ -1185,7 +1174,7 @@ void MainWindow::replaceAll()
     }
     const std::string replacement = replaceEdit_->text().toStdString();
     findCancelled_.store(false);
-    const auto length = static_cast<std::uint64_t>(scintillaEditor_->send(SCI_GETTEXTLENGTH));
+    const auto length = static_cast<std::uint64_t>(activeSession_->editor().send(SCI_GETTEXTLENGTH));
 
     mqt::backend::ScintillaDocumentBackend::SearchBatchRequest req;
     req.needle = needle;
@@ -1205,7 +1194,7 @@ void MainWindow::replaceAll()
             return;
         }
         req.startOffset = offset;
-        const auto r = documentBackend_->searchBatch(req, &findCancelled_);
+        const auto r = activeSession_->backend().searchBatch(req, &findCancelled_);
         if (r.cancelled) {
             findStatusLabel_->setText(QStringLiteral("已取消"));
             return;
@@ -1233,8 +1222,8 @@ void MainWindow::replaceAll()
         return;
     }
 
-    const auto versionBefore = documentBackend_->snapshot().version;
-    auto result = documentBackend_->applyReplace(edits, versionBefore, false);
+    const auto versionBefore = activeSession_->backend().snapshot().version;
+    auto result = activeSession_->backend().applyReplace(edits, versionBefore, false);
     if (result.error == mqt::core::ApplyError::ConfirmationRequired) {
         const auto choice = QMessageBox::question(this,
             QStringLiteral("大范围替换"),
@@ -1245,7 +1234,7 @@ void MainWindow::replaceAll()
             findStatusLabel_->setText(QStringLiteral("已取消"));
             return;
         }
-        result = documentBackend_->applyReplace(edits, versionBefore, true);
+        result = activeSession_->backend().applyReplace(edits, versionBefore, true);
     }
     if (result.error != mqt::core::ApplyError::None) {
         findStatusLabel_->setText(QStringLiteral("替换失败"));
@@ -1259,13 +1248,13 @@ void MainWindow::replaceAll()
 
 void MainWindow::updateStatusBar()
 {
-    if (!largeMode_) {
-        const auto pos = scintillaEditor_->send(SCI_GETCURRENTPOS);
-        const auto lineIndex = scintillaEditor_->send(SCI_LINEFROMPOSITION, pos);
-        const auto lineStart = scintillaEditor_->send(SCI_POSITIONFROMLINE, lineIndex);
+    if (!largeMode_ && activeSession_ != nullptr) {
+        const auto pos = activeSession_->editor().send(SCI_GETCURRENTPOS);
+        const auto lineIndex = activeSession_->editor().send(SCI_LINEFROMPOSITION, pos);
+        const auto lineStart = activeSession_->editor().send(SCI_POSITIONFROMLINE, lineIndex);
         editorMetaLabel_->setText(QStringLiteral("%1 行 · %2 字符 · 光标 %3:%4")
-            .arg(static_cast<qulonglong>(scintillaEditor_->send(SCI_GETLINECOUNT)))
-            .arg(static_cast<qulonglong>(scintillaEditor_->send(SCI_GETTEXTLENGTH)))
+            .arg(static_cast<qulonglong>(activeSession_->editor().send(SCI_GETLINECOUNT)))
+            .arg(static_cast<qulonglong>(activeSession_->editor().send(SCI_GETTEXTLENGTH)))
             .arg(static_cast<qulonglong>(lineIndex + 1))
             .arg(static_cast<qulonglong>(pos - lineStart + 1)));
     } else {
@@ -1319,29 +1308,35 @@ void MainWindow::applyTierUiMode()
         editor_->setLineWrapMode(QPlainTextEdit::NoWrap);
         editor_->setWordWrapMode(QTextOption::NoWrap);
     }
-    editorStack_->setCurrentIndex(largeMode_ ? 1 : 0);
+    // Stack: legacy editor page 0; session editors appended after it.
+    if (!largeMode_ && activeSession_ != nullptr) {
+        editorStack_->setCurrentIndex(editorStack_->indexOf(&activeSession_->editor()));
+    } else {
+        editorStack_->setCurrentIndex(0);
+    }
 }
 
-void MainWindow::releaseDocumentBackend()
+void MainWindow::closeActiveSession()
 {
-    if (documentBackend_ != nullptr) {
-        delete documentBackend_;
-        documentBackend_ = nullptr;
+    if (activeSession_ != nullptr) {
+        editorStack_->removeWidget(&activeSession_->editor());
+        delete activeSession_;
+        activeSession_ = nullptr;
     }
 }
 
 int MainWindow::editorCharacterCount() const
 {
-    if (!largeMode_) {
-        return static_cast<int>(scintillaEditor_->send(SCI_GETTEXTLENGTH));
+    if (!largeMode_ && activeSession_ != nullptr) {
+        return static_cast<int>(activeSession_->editor().send(SCI_GETTEXTLENGTH));
     }
     return std::max(0, editor_->document()->characterCount() - 1);
 }
 
 int MainWindow::editorLineCount() const
 {
-    if (!largeMode_) {
-        return static_cast<int>(scintillaEditor_->send(SCI_GETLINECOUNT));
+    if (!largeMode_ && activeSession_ != nullptr) {
+        return static_cast<int>(activeSession_->editor().send(SCI_GETLINECOUNT));
     }
     return editor_->document()->blockCount();
 }

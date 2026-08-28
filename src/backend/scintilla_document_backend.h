@@ -113,6 +113,8 @@ signals:
     void loadProgress(std::uint64_t loadedBytes, std::uint64_t totalBytes);
     void loadFinished(bool ok, const QString& error);
     void undoBudgetExceeded();
+    /// Emitted for user-driven content changes (not backend apply/load).
+    void contentsChanged();
 
 private slots:
     void onLoadChunk(const QByteArray& bytes);

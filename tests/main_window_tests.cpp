@@ -12,6 +12,7 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include "gui/document_session.h"
 #include <ScintillaEditBase.h>
 #include <QPushButton>
 #include <QTextBrowser>
@@ -90,7 +91,7 @@ public:
     // (bypassing the backend apply() path).
     static void appendToEditor(MainWindow& window, std::string_view text)
     {
-        window.scintillaEditor_->send(SCI_APPENDTEXT, text.size(),
+        window.activeSession_->editor().send(SCI_APPENDTEXT, text.size(),
             reinterpret_cast<Scintilla::sptr_t>(const_cast<char*>(text.data())));
     }
 

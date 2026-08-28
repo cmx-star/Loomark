@@ -19,6 +19,10 @@ class QToolBar;
 class QStackedWidget;
 class ScintillaEditBase;
 
+namespace mqt::gui {
+class DocumentSession;
+}
+
 namespace mqt::backend {
 class ScintillaDocumentBackend;
 }
@@ -70,7 +74,7 @@ private:
     [[nodiscard]] bool windowed() const;
     void applyTierUiMode();
     bool loadIntoEditor(const std::string& raw);
-    void releaseDocumentBackend();
+    void closeActiveSession();
     int editorCharacterCount() const;
     int editorLineCount() const;
     bool readWindow(std::uint64_t rawStart);
@@ -107,12 +111,11 @@ private:
     bool backgroundLoadPending_ = false;
     QMenu* windowMenu_ = nullptr;
 
-    // M09: Normal tier runs on the Scintilla backend (single fact source).
-    // The QPlainTextEdit editor remains the windowed large-file surface and
-    // the legacy fallback; only one of them is visible at a time.
+    // M13: each open document lives in its own DocumentSession (own editor
+    // + backend). The QPlainTextEdit editor remains the windowed large-file
+    // surface and the empty-state fallback.
     QStackedWidget* editorStack_ = nullptr;
-    ScintillaEditBase* scintillaEditor_ = nullptr;
-    mqt::backend::ScintillaDocumentBackend* documentBackend_ = nullptr;
+    DocumentSession* activeSession_ = nullptr;
 
     QPlainTextEdit* editor_ = nullptr;
     QTextBrowser* preview_ = nullptr;

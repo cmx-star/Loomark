@@ -502,6 +502,7 @@ void ScintillaDocumentBackend::onEditorModified(Scintilla::ModificationFlags typ
         if (length > 0) {
             chargeUndoBytes(static_cast<std::uint64_t>(length));
         }
+        emit contentsChanged();
     }
 }
 
