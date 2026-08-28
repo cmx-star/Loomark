@@ -4,14 +4,18 @@
 
 #include <QMainWindow>
 
+#include <atomic>
 #include <filesystem>
 
 class QAction;
+class QCheckBox;
 class QLabel;
+class QLineEdit;
 class QMenu;
 class QPlainTextEdit;
 class QTextBrowser;
 class QTimer;
+class QToolBar;
 class QStackedWidget;
 class ScintillaEditBase;
 
@@ -45,6 +49,9 @@ private:
     void saveDocument();
     void saveDocumentAs();
     void reloadDocument();
+    void toggleFindBar();
+    void findNext();
+    void replaceAll();
     void checkForUpdates(bool userInitiated);
     void openLogDirectory();
     bool loadDocument(const std::filesystem::path& path);
@@ -115,6 +122,16 @@ private:
     QLabel* tierLabel_ = nullptr;
     QLabel* editorMetaLabel_ = nullptr;
     QLabel* previewMetaLabel_ = nullptr;
+    // M11 查找/替换栏（Normal 档，Scintilla 编辑器）
+    QToolBar* findBar_ = nullptr;
+    QLineEdit* findEdit_ = nullptr;
+    QLineEdit* replaceEdit_ = nullptr;
+    QCheckBox* findRegex_ = nullptr;
+    QCheckBox* findCase_ = nullptr;
+    QLabel* findStatusLabel_ = nullptr;
+    QAction* findToggleAction_ = nullptr;
+    std::atomic_bool findCancelled_{false};
+
     QAction* saveAction_ = nullptr;
     QAction* reloadAction_ = nullptr;
     QAction* checkUpdatesAction_ = nullptr;

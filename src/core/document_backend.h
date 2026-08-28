@@ -34,7 +34,14 @@ struct TextEdit {
     std::string newText;
 };
 
-enum class ApplyError { None, StaleVersion, OverlappingEdits, RangeInvalid };
+enum class ApplyError { None, StaleVersion, OverlappingEdits, RangeInvalid,
+    /// M11: the edit batch exceeds kReplaceConfirmBytes and was not
+    /// explicitly confirmed by the user.
+    ConfirmationRequired };
+
+/// Replacements touching more than this many bytes (original span plus
+/// inserted text) must be explicitly confirmed before applyReplace runs.
+inline constexpr std::uint64_t kReplaceConfirmBytes = 32ULL << 20;
 
 struct ApplyResult {
     ApplyError error = ApplyError::None;

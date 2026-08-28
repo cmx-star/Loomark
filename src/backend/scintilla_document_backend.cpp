@@ -271,6 +271,97 @@ mqt::core::ApplyResult ScintillaDocumentBackend::apply(std::vector<mqt::core::Te
     return {mqt::core::ApplyError::None, version_};
 }
 
+mqt::backend::ScintillaDocumentBackend::SearchBatchResult
+ScintillaDocumentBackend::searchBatch(const SearchBatchRequest& request,
+    const std::atomic_bool* cancelFlag) const
+{
+    SearchBatchResult result;
+    const auto length = static_cast<std::uint64_t>(editor_.send(SCI_GETTEXTLENGTH));
+    if (request.needle.empty() || request.startOffset >= length) {
+        result.exhausted = request.startOffset >= length;
+        result.nextOffset = length;
+        return result;
+    }
+
+    sptr_t searchFlags = 0;
+    if (request.matchCase) {
+        searchFlags |= SCFIND_MATCHCASE;
+    }
+    if (request.regex) {
+        searchFlags |= SCFIND_REGEXP;
+    }
+    if (request.wholeWord) {
+        searchFlags |= SCFIND_WHOLEWORD;
+    }
+    editor_.send(SCI_SETSEARCHFLAGS, static_cast<uptr_t>(searchFlags));
+
+    QElapsedTimer deadline;
+    deadline.start();
+    auto pos = static_cast<sptr_t>(request.startOffset);
+    const auto windowEnd = static_cast<sptr_t>(
+        std::min<std::uint64_t>(request.startOffset + request.maxWindow, length));
+
+    while (pos < windowEnd) {
+        if (cancelFlag != nullptr && cancelFlag->load(std::memory_order_relaxed)) {
+            result.cancelled = true;
+            result.nextOffset = static_cast<std::uint64_t>(pos);
+            return result;
+        }
+        editor_.send(SCI_SETTARGETSTART, static_cast<uptr_t>(pos));
+        editor_.send(SCI_SETTARGETEND, static_cast<uptr_t>(windowEnd));
+        const auto found = editor_.send(SCI_SEARCHINTARGET,
+            static_cast<uptr_t>(request.needle.size()),
+            reinterpret_cast<sptr_t>(const_cast<char*>(request.needle.c_str())));
+        if (found < 0) {
+            // No more matches inside this window.
+            result.exhausted = windowEnd >= static_cast<sptr_t>(length);
+            result.nextOffset = static_cast<std::uint64_t>(windowEnd);
+            return result;
+        }
+
+        const auto hitStart = editor_.send(SCI_GETTARGETSTART);
+        const auto hitEnd = editor_.send(SCI_GETTARGETEND);
+        const auto lineIndex = editor_.send(SCI_LINEFROMPOSITION, hitStart);
+        const auto lineStart = editor_.send(SCI_POSITIONFROMLINE, lineIndex);
+        result.hits.push_back(mqt::core::SearchHit{
+            .sourceRange = {static_cast<std::uint64_t>(hitStart),
+                            static_cast<std::uint64_t>(hitEnd)},
+            .position = {static_cast<std::uint64_t>(lineIndex) + 1,
+                         static_cast<std::uint64_t>(hitStart - lineStart + 1)},
+        });
+
+        if (static_cast<std::uint32_t>(result.hits.size()) >= request.maxResults) {
+            result.truncated = hitEnd < windowEnd || windowEnd < static_cast<sptr_t>(length);
+            result.nextOffset = static_cast<std::uint64_t>(hitEnd);
+            return result;
+        }
+        if (static_cast<std::uint64_t>(deadline.elapsed()) >= request.deadlineMs) {
+            result.timeout = true;
+            result.nextOffset = static_cast<std::uint64_t>(hitEnd);
+            return result;
+        }
+        // Zero-length regex matches must still advance.
+        pos = std::max<sptr_t>(hitEnd, hitStart + 1);
+    }
+    result.exhausted = true;
+    result.nextOffset = static_cast<std::uint64_t>(windowEnd);
+    return result;
+}
+
+mqt::core::ApplyResult ScintillaDocumentBackend::applyReplace(
+    const std::vector<mqt::core::TextEdit>& edits,
+    mqt::core::DocumentVersion baseVersion, bool confirmed)
+{
+    std::uint64_t affected = 0;
+    for (const auto& edit : edits) {
+        affected += (edit.end - edit.start) + edit.newText.size();
+    }
+    if (affected > mqt::core::kReplaceConfirmBytes && !confirmed) {
+        return {mqt::core::ApplyError::ConfirmationRequired, version_};
+    }
+    return apply(edits, baseVersion, nullptr);
+}
+
 void ScintillaDocumentBackend::save(const std::atomic_bool*)
 {
     saveTo(path_);

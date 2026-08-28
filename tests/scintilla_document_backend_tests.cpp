@@ -634,6 +634,162 @@ void testBackgroundLoadCancel(const std::filesystem::path& root)
     }
 }
 
+// ---- M11：分批搜索与替换 ----
+
+void testSearchBatchPagination(const std::filesystem::path& root)
+{
+    const auto path = root / "batch-search.md";
+    std::string content;
+    const int kNeedles = 25;
+    for (int i = 0; i < kNeedles; ++i) {
+        content += "padding padding padding padding\n";
+        content += "needle here\n";
+    }
+    writeText(path, content);
+
+    Fixture fx;
+    mqt::backend::ScintillaDocumentBackend backend(fx.editor, path);
+    mqt::backend::ScintillaDocumentBackend::SearchBatchRequest req;
+    req.needle = "needle";
+    req.maxResults = 10;
+    req.maxWindow = 64 * 1024;
+
+    std::vector<mqt::core::SearchHit> all;
+    std::uint64_t offset = 0;
+    int batches = 0;
+    for (;;) {
+        req.startOffset = offset;
+        const auto r = backend.searchBatch(req);
+        ++batches;
+        all.insert(all.end(), r.hits.begin(), r.hits.end());
+        require(r.hits.size() <= 10, "batch must respect maxResults");
+        if (r.cancelled || r.timeout) {
+            require(false, "no cancel/timeout expected in pagination test");
+        }
+        if (r.exhausted) {
+            break;
+        }
+        require(r.nextOffset > offset, "pagination must make progress");
+        offset = r.nextOffset;
+        require(batches < 100, "pagination must terminate");
+    }
+    require(all.size() == kNeedles, "all needle hits must be found");
+    require(batches == 3, "25 hits with cap 10 must take 3 batches");
+    for (std::size_t i = 1; i < all.size(); ++i) {
+        require(all[i].sourceRange.start > all[i - 1].sourceRange.start,
+            "hits must be ordered and non-overlapping");
+    }
+    require(all[0].position.line == 2, "first hit on line 2");
+}
+
+void testSearchBatchTruncatedFlag(const std::filesystem::path& root)
+{
+    const auto path = root / "batch-trunc.md";
+    std::string content;
+    for (int i = 0; i < 50; ++i) {
+        content += "needle ";
+    }
+    writeText(path, content);
+
+    Fixture fx;
+    mqt::backend::ScintillaDocumentBackend backend(fx.editor, path);
+    mqt::backend::ScintillaDocumentBackend::SearchBatchRequest req;
+    req.needle = "needle";
+    req.maxResults = 5;
+    const auto r = backend.searchBatch(req);
+    require(r.hits.size() == 5, "batch capped at maxResults");
+    require(r.truncated, "truncated flag set when more matches follow");
+    require(!r.exhausted, "not exhausted when truncated");
+}
+
+void testSearchBatchRegexAndTimeout(const std::filesystem::path& root)
+{
+    const auto path = root / "batch-regex.md";
+    std::string content;
+    for (int i = 0; i < 20000; ++i) {
+        content += "abcde ";
+    }
+    writeText(path, content);
+
+    Fixture fx;
+    mqt::backend::ScintillaDocumentBackend backend(fx.editor, path);
+    mqt::backend::ScintillaDocumentBackend::SearchBatchRequest req;
+    req.needle = "a[a-z]+d"; // regex
+    req.regex = true;
+    req.matchCase = true;
+    req.maxResults = 100000;
+    req.deadlineMs = 1; // force timeout flag quickly
+    const auto r = backend.searchBatch(req);
+    require(r.hits.size() > 0, "regex search must find matches");
+    require(r.timeout || r.exhausted,
+        "regex batch must report timeout or completion");
+}
+
+void testSearchBatchCancelled(const std::filesystem::path& root)
+{
+    const auto path = root / "batch-cancel.md";
+    writeText(path, "needle needle needle");
+
+    Fixture fx;
+    mqt::backend::ScintillaDocumentBackend backend(fx.editor, path);
+    std::atomic_bool cancel{true};
+    mqt::backend::ScintillaDocumentBackend::SearchBatchRequest req;
+    req.needle = "needle";
+    const auto r = backend.searchBatch(req, &cancel);
+    require(r.cancelled, "pre-set cancel flag must return cancelled");
+    require(r.hits.empty(), "cancelled batch must have no hits");
+}
+
+void testReplaceConfirmationGate(const std::filesystem::path& root)
+{
+    // 33MiB 文档：全量替换受 32MiB 确认门约束
+    const auto path = root / "replace-gate.md";
+    const std::size_t big = 33ULL << 20;
+    std::string content(big, 'a');
+    content.replace(content.size() - 2, 2, "zz");
+    writeText(path, content);
+
+    Fixture fx;
+    mqt::backend::ScintillaDocumentBackend backend(fx.editor, path);
+    mqt::core::TextEdit edit;
+    edit.start = 0;
+    edit.end = big;
+    edit.newText = "b";
+    const std::vector<mqt::core::TextEdit> edits{edit};
+
+    const auto snap = backend.snapshot();
+    const auto denied = backend.applyReplace(edits, snap.version, false);
+    require(denied.error == mqt::core::ApplyError::ConfirmationRequired,
+        ">32MiB replace without confirm must be rejected");
+    require(denied.newVersion == snap.version,
+        "rejected replace must not change version");
+
+    const auto allowed = backend.applyReplace(edits, snap.version, true);
+    require(allowed.error == mqt::core::ApplyError::None,
+        "confirmed replace must succeed");
+    require(allowed.newVersion == snap.version + 1,
+        "confirmed replace must bump version");
+    require(backend.read({mqt::core::ByteRange{0, 1}}) == "b",
+        "confirmed replace must apply the edit");
+    require(backend.info().sizeBytes == 1, "replaced content must be 1 byte");
+}
+
+void testSmallReplaceNeedsNoConfirmation(const std::filesystem::path& root)
+{
+    const auto path = root / "replace-small.md";
+    writeText(path, "hello world");
+
+    Fixture fx;
+    mqt::backend::ScintillaDocumentBackend backend(fx.editor, path);
+    mqt::core::TextEdit edit;
+    edit.start = 6; edit.end = 11; edit.newText = "there";
+    const auto r = backend.applyReplace({edit}, mqt::core::kInitialDocumentVersion, false);
+    require(r.error == mqt::core::ApplyError::None,
+        "small replace must not require confirmation");
+    require(backend.read({mqt::core::ByteRange{0, 11}}) == "hello there",
+        "small replace must apply");
+}
+
 void testApplyEmptyEditsKeepsVersion(const std::filesystem::path& root)
 {
     const auto path = root / "apply_empty.md";
@@ -684,6 +840,12 @@ int main(int argc, char** argv)
         {"ApplyEmptyEditsKeepsVersion", testApplyEmptyEditsKeepsVersion},
         {"BackgroundLoadContentAndMetadata", testBackgroundLoadContentAndMetadata},
         {"BackgroundLoadCancel", testBackgroundLoadCancel},
+        {"SearchBatchPagination", testSearchBatchPagination},
+        {"SearchBatchTruncatedFlag", testSearchBatchTruncatedFlag},
+        {"SearchBatchRegexAndTimeout", testSearchBatchRegexAndTimeout},
+        {"SearchBatchCancelled", testSearchBatchCancelled},
+        {"ReplaceConfirmationGate", testReplaceConfirmationGate},
+        {"SmallReplaceNeedsNoConfirmation", testSmallReplaceNeedsNoConfirmation},
     };
     try {
         const auto root = testRoot();

@@ -66,6 +66,37 @@ public:
     [[nodiscard]] const mqt::core::SparseLineIndex& lineIndex() const { return lineIndex_; }
     [[nodiscard]] std::uint64_t fingerprint() const { return fingerprint_; }
 
+    // ---- M11: batched search & confirmed bulk replace ----
+
+    struct SearchBatchRequest {
+        std::string needle;
+        bool regex = false;
+        bool matchCase = true;
+        bool wholeWord = false;
+        std::uint64_t startOffset = 0;
+        std::uint32_t maxResults = 1000;
+        std::uint64_t maxWindow = 1ULL << 20; // per-batch scan window cap
+        std::uint64_t deadlineMs = 250;       // per-batch time budget
+    };
+
+    struct SearchBatchResult {
+        std::vector<mqt::core::SearchHit> hits;
+        bool truncated = false;  // maxResults reached, more matches may follow
+        bool timeout = false;    // per-batch deadline exceeded
+        bool exhausted = false;  // scanned through the end of the document
+        bool cancelled = false;
+        std::uint64_t nextOffset = 0; // resume point for the next batch
+    };
+
+    SearchBatchResult searchBatch(const SearchBatchRequest& request,
+        const std::atomic_bool* cancelFlag = nullptr) const;
+
+    /// Bulk replace with the >32MiB confirmation gate. Delegates to apply(),
+    /// so version / range / overlap semantics and the single undo group are
+    /// identical to programmatic edits.
+    mqt::core::ApplyResult applyReplace(const std::vector<mqt::core::TextEdit>& edits,
+        mqt::core::DocumentVersion baseVersion, bool confirmed);
+
 signals:
     void loadProgress(std::uint64_t loadedBytes, std::uint64_t totalBytes);
     void loadFinished(bool ok, const QString& error);

@@ -16,7 +16,9 @@
 #include <QAction>
 #include <QApplication>
 #include <QAbstractButton>
+#include <QCheckBox>
 #include <QCloseEvent>
+#include <QLineEdit>
 #include <QDebug>
 #include <QDesktopServices>
 #include <QFileDialog>
@@ -507,6 +509,47 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
         updateCheckUserInitiated_ = false;
         qWarning().noquote() << QStringLiteral("Update check failed: %1").arg(message);
     });
+
+    // M11 查找/替换栏
+    findBar_ = new QToolBar(this);
+    findBar_->setMovable(false);
+    findBar_->setHidden(true);
+    addToolBar(Qt::BottomToolBarArea, findBar_);
+    findEdit_ = new QLineEdit(findBar_);
+    findEdit_->setPlaceholderText(QStringLiteral("查找"));
+    findEdit_->setClearButtonEnabled(true);
+    findEdit_->setMinimumWidth(220);
+    findRegex_ = new QCheckBox(QStringLiteral("正则"), findBar_);
+    findCase_ = new QCheckBox(QStringLiteral("区分大小写"), findBar_);
+    findCase_->setChecked(true);
+    auto* findNextButton = new QPushButton(QStringLiteral("查找下一个"), findBar_);
+    replaceEdit_ = new QLineEdit(findBar_);
+    replaceEdit_->setPlaceholderText(QStringLiteral("替换为"));
+    replaceEdit_->setMinimumWidth(220);
+    auto* replaceAllButton = new QPushButton(QStringLiteral("全部替换"), findBar_);
+    findStatusLabel_ = new QLabel(findBar_);
+    findStatusLabel_->setStyleSheet(QStringLiteral("color:#94a3b8;"));
+    findBar_->addWidget(findEdit_);
+    findBar_->addWidget(findRegex_);
+    findBar_->addWidget(findCase_);
+    findBar_->addWidget(findNextButton);
+    findBar_->addWidget(replaceEdit_);
+    findBar_->addWidget(replaceAllButton);
+    findBar_->addWidget(findStatusLabel_);
+    connect(findNextButton, &QPushButton::clicked, this, [this] { findNext(); });
+    connect(findEdit_, &QLineEdit::returnPressed, this, [this] { findNext(); });
+    connect(replaceAllButton, &QPushButton::clicked, this, [this] { replaceAll(); });
+    findToggleAction_ = new QAction(QStringLiteral("查找"), this);
+    findToggleAction_->setShortcut(QKeySequence::Find);
+    connect(findToggleAction_, &QAction::triggered, this, [this] {
+        findBar_->setVisible(!findBar_->isVisible());
+        if (findBar_->isVisible()) {
+            findEdit_->setFocus();
+        } else {
+            findCancelled_.store(true);
+        }
+    });
+    addAction(findToggleAction_);
 
     applyUiStyle();
     updatePreviewLayout();
@@ -1075,6 +1118,138 @@ void MainWindow::updatePreviewLayout()
     preview_->document()->setDefaultFont(font);
     preview_->document()->setDocumentMargin(margin);
     preview_->document()->setTextWidth(std::max(320, width - margin * 2));
+}
+
+void MainWindow::toggleFindBar()
+{
+    findBar_->setVisible(!findBar_->isVisible());
+    if (findBar_->isVisible()) {
+        findEdit_->setFocus();
+    }
+}
+
+void MainWindow::findNext()
+{
+    if (largeMode_ || documentBackend_ == nullptr) {
+        return;
+    }
+    const std::string needle = findEdit_->text().toStdString();
+    if (needle.empty()) {
+        return;
+    }
+    findCancelled_.store(false);
+    mqt::backend::ScintillaDocumentBackend::SearchBatchRequest req;
+    req.needle = needle;
+    req.regex = findRegex_->isChecked();
+    req.matchCase = findCase_->isChecked();
+    req.maxResults = 1;
+    req.maxWindow = 8ULL << 20;
+    req.startOffset = static_cast<std::uint64_t>(
+        scintillaEditor_->send(SCI_GETCURRENTPOS));
+
+    auto r = documentBackend_->searchBatch(req, &findCancelled_);
+    if (r.cancelled) {
+        return;
+    }
+    if (r.hits.empty() && !r.timeout && req.startOffset > 0) {
+        req.startOffset = 0; // wrap around
+        r = documentBackend_->searchBatch(req, &findCancelled_);
+    }
+    if (r.hits.empty()) {
+        findStatusLabel_->setText(QStringLiteral("未找到"));
+        return;
+    }
+    if (r.timeout) {
+        findStatusLabel_->setText(QStringLiteral("搜索超时，已停在文档较前位置"));
+    }
+    const auto hit = r.hits.front();
+    scintillaEditor_->send(SCI_SETSELECTIONSTART, static_cast<uptr_t>(hit.sourceRange.start));
+    scintillaEditor_->send(SCI_SETSELECTIONEND, static_cast<uptr_t>(hit.sourceRange.end));
+    findStatusLabel_->setText(QStringLiteral("命中 行 %1 列 %2")
+        .arg(hit.position.line).arg(hit.position.column));
+}
+
+void MainWindow::replaceAll()
+{
+    if (largeMode_ || documentBackend_ == nullptr) {
+        return;
+    }
+    const std::string needle = findEdit_->text().toStdString();
+    if (needle.empty()) {
+        return;
+    }
+    const std::string replacement = replaceEdit_->text().toStdString();
+    findCancelled_.store(false);
+    const auto length = static_cast<std::uint64_t>(scintillaEditor_->send(SCI_GETTEXTLENGTH));
+
+    mqt::backend::ScintillaDocumentBackend::SearchBatchRequest req;
+    req.needle = needle;
+    req.regex = findRegex_->isChecked();
+    req.matchCase = findCase_->isChecked();
+    req.maxResults = 1000;
+    req.maxWindow = 8ULL << 20;
+
+    std::vector<mqt::core::TextEdit> edits;
+    std::uint64_t offset = 0;
+    std::uint64_t affected = 0;
+    QElapsedTimer collectTimer;
+    collectTimer.start();
+    while (offset < length && edits.size() < 100000) {
+        if (findCancelled_.load()) {
+            findStatusLabel_->setText(QStringLiteral("已取消"));
+            return;
+        }
+        req.startOffset = offset;
+        const auto r = documentBackend_->searchBatch(req, &findCancelled_);
+        if (r.cancelled) {
+            findStatusLabel_->setText(QStringLiteral("已取消"));
+            return;
+        }
+        for (const auto& hit : r.hits) {
+            if (hit.sourceRange.end == hit.sourceRange.start) {
+                continue; // zero-length regex match: skip to avoid runaway
+            }
+            edits.push_back(mqt::core::TextEdit{
+                hit.sourceRange.start, hit.sourceRange.end, replacement});
+            affected += (hit.sourceRange.end - hit.sourceRange.start) + replacement.size();
+        }
+        if (r.exhausted) {
+            break;
+        }
+        offset = r.nextOffset;
+        QApplication::processEvents(QEventLoop::AllEvents, 10);
+        if (collectTimer.elapsed() > 10000) {
+            break; // hard cap on collection time
+        }
+    }
+
+    if (edits.empty()) {
+        findStatusLabel_->setText(QStringLiteral("未找到"));
+        return;
+    }
+
+    const auto versionBefore = documentBackend_->snapshot().version;
+    auto result = documentBackend_->applyReplace(edits, versionBefore, false);
+    if (result.error == mqt::core::ApplyError::ConfirmationRequired) {
+        const auto choice = QMessageBox::question(this,
+            QStringLiteral("大范围替换"),
+            QStringLiteral("本次替换将修改约 %1 MiB 内容，是否继续？")
+                .arg(affected / (1024ULL * 1024ULL)),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (choice != QMessageBox::Yes) {
+            findStatusLabel_->setText(QStringLiteral("已取消"));
+            return;
+        }
+        result = documentBackend_->applyReplace(edits, versionBefore, true);
+    }
+    if (result.error != mqt::core::ApplyError::None) {
+        findStatusLabel_->setText(QStringLiteral("替换失败"));
+        return;
+    }
+    dirty_ = true;
+    updateWindowState();
+    updateStatusBar();
+    findStatusLabel_->setText(QStringLiteral("已替换 %1 处").arg(edits.size()));
 }
 
 void MainWindow::updateStatusBar()

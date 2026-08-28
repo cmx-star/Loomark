@@ -11,6 +11,7 @@
 
 #include <QApplication>
 #include <QElapsedTimer>
+#include <atomic>
 
 #include <cstdio>
 #include <filesystem>
@@ -43,7 +44,7 @@ bool waitForFinished(mqt::backend::ScintillaDocumentBackend& backend,
 int main(int argc, char* argv[])
 {
     if (argc < 3) {
-        fprintf(stderr, "usage: %s <sample.md> [load|cancel]\n", argv[0]);
+        fprintf(stderr, "usage: %s <sample.md> [load|cancel|search]\n", argv[0]);
         return 2;
     }
     QApplication app(argc, argv);
@@ -84,6 +85,52 @@ int main(int argc, char* argv[])
         }
         printf("CANCEL VERIFY PASS\n");
         return 0;
+    }
+
+    if (mode == "search") {
+        // 先完成装载，再验证分批搜索与取消
+        if (!backend.startBackgroundLoad(path, 4ULL << 20)) {
+            fprintf(stderr, "start failed\n");
+            return 1;
+        }
+        qint64 pumps = 0, maxGap = 0;
+        waitForFinished(backend, &finished, kTimeoutMs, &pumps, &maxGap);
+        if (!finished || !ok) {
+            fprintf(stderr, "load failed\n");
+            return 1;
+        }
+
+        mqt::backend::ScintillaDocumentBackend::SearchBatchRequest req;
+        req.needle = "Section";
+        req.maxResults = 10000;
+        req.deadlineMs = 200;
+
+        std::uint64_t totalHits = 0, offset = 0;
+        int batches = 0;
+        QElapsedTimer timer;
+        timer.start();
+        for (;;) {
+            req.startOffset = offset;
+            const auto r = backend.searchBatch(req);
+            ++batches;
+            totalHits += r.hits.size();
+            if (r.exhausted || r.timeout) {
+                break;
+            }
+            offset = r.nextOffset;
+        }
+        printf("search: hits=%llu batches=%d elapsedMs=%lld\n",
+            (unsigned long long)totalHits, batches, timer.elapsed());
+
+        // 取消验证：预置取消标志，必须立即返回
+        std::atomic_bool cancel{true};
+        req.startOffset = 0;
+        const auto cancelled = backend.searchBatch(req, &cancel);
+        printf("search-cancel: cancelled=%d elapsedMs=%lld\n",
+            cancelled.cancelled, timer.elapsed());
+        const bool pass = totalHits > 0 && batches > 1 && cancelled.cancelled;
+        printf("%s\n", pass ? "SEARCH VERIFY PASS" : "SEARCH VERIFY FAILED");
+        return pass ? 0 : 1;
     }
 
     if (mode != "load") {
