@@ -205,6 +205,28 @@ bool waitForIndex(mqt::gui::MainWindow& window, int timeoutMs)
     return !mqt::gui::MainWindowTestAccess::indexing(window);
 }
 
+void testNormalBackendSaveRoundTrip(
+    mqt::gui::MainWindow& window, const std::filesystem::path& root)
+{
+    // M09: Normal tier round-trips through the Scintilla document backend;
+    // BOM and mixed line endings must survive byte-for-byte.
+    const auto srcPath = root / "backend-roundtrip.md";
+    const std::string content = "\xEF\xBB\xBF# 标题\r\n\r\n正文 line\nlast\r\n";
+    writeBinary(srcPath, content);
+
+    require(mqt::gui::MainWindowTestAccess::load(window, srcPath),
+        "normal document must open through the backend");
+    require(!mqt::gui::MainWindowTestAccess::windowed(window),
+        "normal document must not enter windowed mode");
+
+    const auto target = root / "backend-roundtrip-out.md";
+    require(mqt::gui::MainWindowTestAccess::save(window, target),
+        "normal document must save through the backend");
+    require(readWhole(target) == content,
+        "backend save must round-trip BOM/CRLF bytes exactly");
+    drainBackground(window);
+}
+
 void testStaleIndexCannotReplaceNormalPreview(
     mqt::gui::MainWindow& window, const std::filesystem::path& root)
 {
@@ -401,6 +423,7 @@ int main(int argc, char** argv)
         mqt::gui::MainWindowTestAccess::disableUpdateChecks(window);
         testUnchangedWindowSavePreservesBytes(window, root);
         testStaleIndexCannotReplaceNormalPreview(window, root);
+        testNormalBackendSaveRoundTrip(window, root);
         std::filesystem::remove_all(root);
         std::cout << "main window tests passed\n";
         return EXIT_SUCCESS;

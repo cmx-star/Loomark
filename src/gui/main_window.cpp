@@ -1,5 +1,6 @@
 #include "gui/main_window.h"
 
+#include "backend/scintilla_document_backend.h"
 #include "gui/application_logger.h"
 #include "gui/file_inspect_worker.h"
 #include "gui/markdown_document_renderer.h"
@@ -9,6 +10,8 @@
 
 #include "core/file_tier.h"
 #include "core/markdown_index.h"
+
+#include <ScintillaEditBase.h>
 
 #include <QAction>
 #include <QApplication>
@@ -35,6 +38,7 @@
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSplitter>
+#include <QStackedWidget>
 #include <QStatusBar>
 #include <QTextBrowser>
 #include <QTextBlock>
@@ -254,17 +258,6 @@ bool isFenceLine(QStringView line)
     return line.startsWith(QStringLiteral("```")) || line.startsWith(QStringLiteral("~~~"));
 }
 
-bool isInsideFenceBefore(QTextBlock block)
-{
-    bool insideFence = false;
-    for (QTextBlock current = block.document()->begin(); current.isValid() && current != block; current = current.next()) {
-        if (isFenceLine(QStringView(current.text()))) {
-            insideFence = !insideFence;
-        }
-    }
-    return insideFence;
-}
-
 QIcon themedIcon(QStringView name)
 {
     return QIcon(QStringLiteral(":/qdarktheme/dist/dark/svg/%1__icon-foreground__rotate-0.svg").arg(name));
@@ -318,6 +311,21 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
     editor_->setTabStopDistance(editor_->fontMetrics().horizontalAdvance(QLatin1Char(' ')) * 4);
     editor_->document()->setDocumentMargin(18);
 
+    // M09: Normal tier edits through the Scintilla backend; the legacy
+    // QPlainTextEdit stays for the windowed large-file path.
+    scintillaEditor_ = new ScintillaEditBase(splitter);
+    scintillaEditor_->setFrameShape(QFrame::NoFrame);
+    scintillaEditor_->setFont(editorFont());
+    scintillaEditor_->send(SCI_SETCODEPAGE, SC_CP_UTF8);
+    scintillaEditor_->send(SCI_SETTABWIDTH, 4);
+    scintillaEditor_->send(SCI_SETMARGINWIDTHN, 1, 0);
+    scintillaEditor_->send(SCI_SETWRAPMODE, SC_WRAP_WORD);
+    scintillaEditor_->send(SCI_SETUNDOCOLLECTION, 1);
+
+    editorStack_ = new QStackedWidget(splitter);
+    editorStack_->addWidget(scintillaEditor_);
+    editorStack_->addWidget(editor_);
+
     preview_->setFrameShape(QFrame::NoFrame);
     preview_->setOpenExternalLinks(true);
     preview_->setFont(interfaceFont(14));
@@ -325,7 +333,7 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
     preview_->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
     preview_->document()->setDocumentMargin(22);
 
-    splitter->addWidget(makePanel(QStringLiteral("源码"), editorMetaLabel_, editor_, splitter));
+    splitter->addWidget(makePanel(QStringLiteral("源码"), editorMetaLabel_, editorStack_, splitter));
     splitter->addWidget(makePanel(QStringLiteral("预览"), previewMetaLabel_, preview_, splitter));
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 1);
@@ -375,6 +383,28 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
         updateStatusBar();
     });
     connect(editor_->verticalScrollBar(), &QScrollBar::valueChanged, this, [this] {
+        syncPreviewWithEditorScroll();
+        updateStatusBar();
+    });
+    connect(scintillaEditor_, &ScintillaEditBase::modified, this,
+        [this](Scintilla::ModificationFlags type) {
+            using Fl = Scintilla::ModificationFlags;
+            const bool contentChanged = (type & Fl::InsertText) != Fl(0) ||
+                                        (type & Fl::DeleteText) != Fl(0);
+            if (!contentChanged) {
+                return;
+            }
+            dirty_ = true;
+            updateWindowState();
+            updateStatusBar();
+            if (previewTimer_ && !largeMode_) {
+                previewTimer_->start();
+            }
+        });
+    connect(scintillaEditor_, &ScintillaEditBase::updateUi, this, [this](Scintilla::Update) {
+        updateStatusBar();
+    });
+    connect(scintillaEditor_->verticalScrollBar(), &QScrollBar::valueChanged, this, [this] {
         syncPreviewWithEditorScroll();
         updateStatusBar();
     });
@@ -624,17 +654,16 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
         if (indexThread_) {
             indexThread_->cancel();
         }
+        releaseDocumentBackend();
         largeMode_ = nextLargeMode;
         setCurrentPath(path, info);
         ++documentGeneration_;
         applyTierUiMode();
 
         if (!largeMode_) {
-            std::string raw = mqt::core::readRange(path, {0, info.sizeBytes});
-            if (info.hasUtf8Bom && raw.rfind(bomPrefix(), 0) == 0) {
-                raw.erase(0, 3);
-            }
-            loadIntoEditor(raw);
+            // Normal tier: the Scintilla backend owns the fact source and
+            // loads the document (BOM bookkeeping included).
+            documentBackend_ = new mqt::backend::ScintillaDocumentBackend(*scintillaEditor_, path);
             windowStart_ = 0;
             windowEnd_ = info.sizeBytes;
         } else if (!readWindow(0)) {
@@ -697,7 +726,7 @@ void MainWindow::refreshPreview()
     const auto renderResult = renderMarkdownDocument(*preview_->document(), previewText, baseUrl);
     updatePreviewLayout();
 
-    const int characterCount = std::max(0, editor_->document()->characterCount() - 1);
+    const int characterCount = editorCharacterCount();
     if (!renderResult.success) {
         previewMetaLabel_->setText(QStringLiteral("预览失败 · %1").arg(renderResult.errorMessage.left(72)));
     } else if (characterCount > kFullPreviewCharLimit) {
@@ -705,7 +734,7 @@ void MainWindow::refreshPreview()
         previewMetaLabel_->setText(QStringLiteral("大型文件 · 第 %1-%2 行 / 共 %3 行")
             .arg(previewStartLine_)
             .arg(previewEndLine_)
-            .arg(editor_->document()->blockCount()));
+            .arg(editorLineCount()));
     } else {
         previewMetaLabel_->setText(QStringLiteral("整篇 · %1").arg(formatFileSize(currentInfo_.sizeBytes)));
         syncPreviewWithEditorScroll();
@@ -719,7 +748,7 @@ void MainWindow::syncPreviewWithEditorScroll()
         return;
     }
 
-    const int characterCount = std::max(0, editor_->document()->characterCount() - 1);
+    const int characterCount = editorCharacterCount();
     if (characterCount > kFullPreviewCharLimit) {
         if (previewTimer_) {
             previewTimer_->start();
@@ -727,7 +756,7 @@ void MainWindow::syncPreviewWithEditorScroll()
         return;
     }
 
-    auto* editorScroll = editor_->verticalScrollBar();
+    auto* editorScroll = scintillaEditor_->verticalScrollBar();
     auto* previewScroll = preview_->verticalScrollBar();
     if (editorScroll->maximum() <= 0 || previewScroll->maximum() <= 0) {
         return;
@@ -740,29 +769,56 @@ void MainWindow::syncPreviewWithEditorScroll()
 
 QString MainWindow::collectPreviewText()
 {
-    const auto* document = editor_->document();
-    const int characterCount = std::max(0, document->characterCount() - 1);
-    if (characterCount <= kFullPreviewCharLimit) {
+    // Normal tier runs on Scintilla; the windowed tier never reaches here
+    // (refreshPreview routes it to the indexed preview).
+    const auto length = static_cast<std::int64_t>(scintillaEditor_->send(SCI_GETTEXTLENGTH));
+    if (length <= kFullPreviewCharLimit) {
         previewStartLine_ = 1;
-        previewEndLine_ = document->blockCount();
-        return editor_->toPlainText();
+        previewEndLine_ = static_cast<int>(scintillaEditor_->send(SCI_GETLINECOUNT));
+        std::string all(static_cast<std::size_t>(length) + 1, '\0');
+        scintillaEditor_->send(SCI_GETTEXT, length + 1,
+            reinterpret_cast<sptr_t>(all.data()));
+        all.resize(static_cast<std::size_t>(length));
+        return QString::fromUtf8(all.data(), static_cast<int>(all.size()));
     }
 
-    QTextBlock block = static_cast<MarkdownEditor*>(editor_)->visibleTopBlock();
-    if (!block.isValid()) {
-        block = document->begin();
+    // Over the full-preview budget: extract the visible region only. Fence
+    // state is scanned from the document start, bounded to the first 20k
+    // lines (an unclosed fence opened before that bound may render as open
+    // text; recorded as a known M09 limitation).
+    const auto firstLine = scintillaEditor_->send(SCI_GETFIRSTVISIBLELINE);
+    const auto lineCount = scintillaEditor_->send(SCI_GETLINECOUNT);
+    previewStartLine_ = static_cast<int>(firstLine) + 1;
+
+    bool fenceOpen = false;
+    constexpr sptr_t kFenceScanBound = 20000;
+    const sptr_t fenceScanEnd = std::min<sptr_t>(firstLine, kFenceScanBound);
+    std::string lineBuf;
+    for (sptr_t i = 0; i < fenceScanEnd; ++i) {
+        lineBuf.resize(static_cast<std::size_t>(scintillaEditor_->send(SCI_LINELENGTH, i)));
+        scintillaEditor_->send(SCI_GETLINE, i, reinterpret_cast<sptr_t>(lineBuf.data()));
+        if (isFenceLine(QStringView(QString::fromUtf8(lineBuf.data(), static_cast<int>(lineBuf.size()))))) {
+            fenceOpen = !fenceOpen;
+        }
     }
+    // Drop the trailing newline Scintilla includes in SCI_GETLINE text.
+    auto lineText = [&](sptr_t i) {
+        lineBuf.resize(static_cast<std::size_t>(scintillaEditor_->send(SCI_LINELENGTH, i)));
+        scintillaEditor_->send(SCI_GETLINE, i, reinterpret_cast<sptr_t>(lineBuf.data()));
+        while (!lineBuf.empty() && (lineBuf.back() == '\n' || lineBuf.back() == '\r')) {
+            lineBuf.pop_back();
+        }
+        return QString::fromUtf8(lineBuf.data(), static_cast<int>(lineBuf.size()));
+    };
 
     QString text;
     text.reserve(kLargePreviewCharLimit);
-    bool fenceOpen = isInsideFenceBefore(block);
-    previewStartLine_ = block.isValid() ? block.blockNumber() + 1 : 1;
     previewEndLine_ = previewStartLine_;
     if (fenceOpen) {
         text += QStringLiteral("```\n");
     }
-    while (block.isValid() && text.size() < kLargePreviewCharLimit) {
-        QString line = block.text();
+    for (sptr_t i = firstLine; i < lineCount && text.size() < kLargePreviewCharLimit; ++i) {
+        QString line = lineText(i);
         const int remaining = kLargePreviewCharLimit - text.size();
         if (line.size() + 1 > remaining) {
             if (!text.isEmpty()) {
@@ -775,8 +831,7 @@ QString MainWindow::collectPreviewText()
         if (isFenceLine(QStringView(line))) {
             fenceOpen = !fenceOpen;
         }
-        previewEndLine_ = block.blockNumber() + 1;
-        block = block.next();
+        previewEndLine_ = static_cast<int>(i) + 1;
     }
     if (fenceOpen) {
         text += QStringLiteral("```\n");
@@ -790,6 +845,29 @@ bool MainWindow::writeCurrentDocument(const std::filesystem::path& path)
         // The edited window is normalized to the detected newline style, so
         // make sure the background classification finished before writing.
         completeInspection();
+
+        if (!windowed()) {
+            // Normal tier: the backend streams the Scintilla buffer to the
+            // temp file and commits the atomic replace; no second full copy
+            // of the document is materialized on the UI side.
+            if (documentBackend_ == nullptr) {
+                throw std::runtime_error("no document backend for the current file");
+            }
+            if (!currentPath_.empty() && path == currentPath_) {
+                documentBackend_->save();
+            } else {
+                documentBackend_->saveAs(path);
+            }
+            auto info = mqt::core::statFile(path);
+            info.newlineStyle = currentInfo_.newlineStyle;
+            info.newlineStyleKnown = currentInfo_.newlineStyleKnown;
+            setCurrentPath(path, info);
+            dirty_ = false;
+            updateWindowState();
+            updateStatusBar();
+            statusBar()->showMessage(QStringLiteral("已保存 %1").arg(toQString(path)), 2000);
+            return true;
+        }
 
         const QString plain = editor_->toPlainText();
         QByteArray utf8 = plain.toUtf8();
@@ -955,18 +1033,28 @@ void MainWindow::updatePreviewLayout()
 
 void MainWindow::updateStatusBar()
 {
-    const int line = editor_->textCursor().blockNumber() + 1;
-    const int column = editor_->textCursor().positionInBlock() + 1;
-    const int characterCount = std::max(0, editor_->document()->characterCount() - 1);
-    editorMetaLabel_->setText(QStringLiteral("%1 行 · %2 字符 · 光标 %3:%4")
-        .arg(editor_->document()->blockCount())
-        .arg(characterCount)
-        .arg(line)
-        .arg(column));
-
-    if (windowed()) {
-        editorMetaLabel_->setText(editorMetaLabel_->text()
-            + QStringLiteral(" · 窗口字节 %1–%2").arg(windowStart_).arg(windowEnd_));
+    if (!largeMode_) {
+        const auto pos = scintillaEditor_->send(SCI_GETCURRENTPOS);
+        const auto lineIndex = scintillaEditor_->send(SCI_LINEFROMPOSITION, pos);
+        const auto lineStart = scintillaEditor_->send(SCI_POSITIONFROMLINE, lineIndex);
+        editorMetaLabel_->setText(QStringLiteral("%1 行 · %2 字符 · 光标 %3:%4")
+            .arg(static_cast<qulonglong>(scintillaEditor_->send(SCI_GETLINECOUNT)))
+            .arg(static_cast<qulonglong>(scintillaEditor_->send(SCI_GETTEXTLENGTH)))
+            .arg(static_cast<qulonglong>(lineIndex + 1))
+            .arg(static_cast<qulonglong>(pos - lineStart + 1)));
+    } else {
+        const int line = editor_->textCursor().blockNumber() + 1;
+        const int column = editor_->textCursor().positionInBlock() + 1;
+        const int characterCount = std::max(0, editor_->document()->characterCount() - 1);
+        editorMetaLabel_->setText(QStringLiteral("%1 行 · %2 字符 · 光标 %3:%4")
+            .arg(editor_->document()->blockCount())
+            .arg(characterCount)
+            .arg(line)
+            .arg(column));
+        if (windowed()) {
+            editorMetaLabel_->setText(editorMetaLabel_->text()
+                + QStringLiteral(" · 窗口字节 %1–%2").arg(windowStart_).arg(windowEnd_));
+        }
     }
 
     if (currentPath_.empty()) {
@@ -996,13 +1084,40 @@ bool MainWindow::windowed() const
 
 void MainWindow::applyTierUiMode()
 {
+    // Index 0 = Scintilla (Normal tier), index 1 = legacy QPlainTextEdit
+    // (windowed large-file tier). Wrap modes are set while the legacy editor
+    // may still be hidden: changing wrap on a visible editor forces a
+    // synchronous full-document relayout, which is quadratic on the 2 MiB
+    // window content once the viewport width collapses.
     if (largeMode_) {
         editor_->setLineWrapMode(QPlainTextEdit::NoWrap);
         editor_->setWordWrapMode(QTextOption::NoWrap);
-    } else {
-        editor_->setLineWrapMode(QPlainTextEdit::WidgetWidth);
-        editor_->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
     }
+    editorStack_->setCurrentIndex(largeMode_ ? 1 : 0);
+}
+
+void MainWindow::releaseDocumentBackend()
+{
+    if (documentBackend_ != nullptr) {
+        delete documentBackend_;
+        documentBackend_ = nullptr;
+    }
+}
+
+int MainWindow::editorCharacterCount() const
+{
+    if (!largeMode_) {
+        return static_cast<int>(scintillaEditor_->send(SCI_GETTEXTLENGTH));
+    }
+    return std::max(0, editor_->document()->characterCount() - 1);
+}
+
+int MainWindow::editorLineCount() const
+{
+    if (!largeMode_) {
+        return static_cast<int>(scintillaEditor_->send(SCI_GETLINECOUNT));
+    }
+    return editor_->document()->blockCount();
 }
 
 bool MainWindow::loadIntoEditor(const std::string& raw)

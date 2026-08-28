@@ -71,7 +71,9 @@ double writeAtomically(const char *path, const char *data, qint64 size,
     t.start();
     const QString tmp = QString::fromLocal8Bit(path) + ".bench-tmp";
     QFile out(tmp);
-    out.open(QIODevice::WriteOnly);
+    if (!out.open(QIODevice::WriteOnly)) {
+        return -1.0;
+    }
     const char *p = data;
     qint64 left = size;
     while (left > 0) {
@@ -155,7 +157,10 @@ void runScintilla(const char *path, const QByteArray &bytes, const std::string &
     t.start();
     const QString tmp = QString::fromLocal8Bit(path) + ".bench-tmp";
     QFile out(tmp);
-    out.open(QIODevice::WriteOnly);
+    if (!out.open(QIODevice::WriteOnly)) {
+        fprintf(stderr, "cannot open temp file: %s\n", qPrintable(tmp));
+        return;
+    }
     std::string chunkBuf;
     constexpr sptr_t kWindow = 8 * 1024 * 1024;
     Sci_TextRangeFull range{};
@@ -193,7 +198,10 @@ int main(int argc, char *argv[]) {
     QFile file(QString::fromLocal8Bit(path));
     QElapsedTimer t;
     t.start();
-    file.open(QIODevice::ReadOnly);
+    if (!file.open(QIODevice::ReadOnly)) {
+        fprintf(stderr, "cannot open sample: %s\n", path);
+        return 2;
+    }
     const QByteArray bytes = file.readAll();
     file.close();
     qInfo("sample: %s (%lld MB, raw read %.1f ms)", path,

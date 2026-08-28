@@ -435,6 +435,7 @@ endif()
 target_link_libraries(markdown_qt_gui
     PRIVATE
         markdown_qt_core
+        markdown_qt_backend
         md4qt::md4qt
         qjs
         Qt6::Network
@@ -613,6 +614,7 @@ add_executable(markdown_qt_main_window_tests
 target_link_libraries(markdown_qt_main_window_tests
     PRIVATE
         markdown_qt_core
+        markdown_qt_backend
         md4qt::md4qt
         qjs
         Qt6::Network

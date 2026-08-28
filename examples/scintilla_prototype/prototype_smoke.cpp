@@ -44,7 +44,9 @@ int main(int argc, char *argv[]) {
     edit.send(SCI_SETCODEPAGE, SC_CP_UTF8);
     edit.resize(600, 400);
     edit.show();
-    QTest::qWaitForWindowExposed(&edit);
+    if (!QTest::qWaitForWindowExposed(&edit)) {
+        return 2;
+    }
 
     int failures = 0;
     auto check = [&](bool ok, const char *what) {
