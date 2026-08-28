@@ -128,3 +128,22 @@ searchBatch 分批搜索（上限/超时/取消）+ applyReplace 32MiB 确认门
 ### Status
 
 [OK] **M11 完成。下一步 M12：流式保存与撤销预算 → F02**
+
+
+## Session 6: M12 完成并通过 F02 功能门
+
+**Date**: 2026-08-29
+**Task**: 08-29-m12_streaming_save_undo_budget
+**Branch**: `feat/large-file-windowed-gui`
+
+### Summary
+
+恢复点（版本保存点）、外部指纹复核（保存前流式比对磁盘基线）、撤销内存预算（64MiB 默认，超额清空）落地。F02「300MB 桌面完整编辑」端到端验收通过：装载→编辑→搜索→替换确认门→流式原子保存→重载复核。
+
+### Testing
+
+- [OK] 契约测试新增 4 用例（36 总数）；ctest 9/9；F02 VERIFY PASS
+
+### Status
+
+[OK] **批次 3 完成（F02 达成）。下一步批次 4：M13 DocumentSession**
