@@ -90,3 +90,22 @@ D01 决策按用户「推进项目整体到整体完成」指令以默认批准�
 ### Status
 
 [OK] **M09 完成。下一步 M10：分块 Loader 与稀疏行索引**
+
+
+## Session 4: M10 分块 Loader 与稀疏行索引完成
+
+**Date**: 2026-08-29
+**Task**: 08-29-m10_chunked_loader_line_index
+**Branch**: `feat/large-file-windowed-gui`
+
+### Summary
+
+后台分块装载落地：core 扫描器（稀疏行索引/流式指纹/换行统计）+ ScintillaLoadTask + GUI 集成，300MB 验收双通过。
+
+### Testing
+
+- [OK] ctest 9/9；300MB 装载 845ms、UI 最大间隔 61ms；取消 12ms 清空；diff-check 通过
+
+### Status
+
+[OK] **M10 完成。下一步 M11：大文件搜索替换**
