@@ -147,3 +147,22 @@ searchBatch 分批搜索（上限/超时/取消）+ applyReplace 32MiB 确认门
 ### Status
 
 [OK] **批次 3 完成（F02 达成）。下一步批次 4：M13 DocumentSession**
+
+
+## Session 7: M13 DocumentSession 会话层完成
+
+**Date**: 2026-08-29
+**Task**: 08-29-m13_document_session
+**Branch**: `feat/large-file-windowed-gui`
+
+### Summary
+
+会话层落地：每文档独立编辑器+后端+取消域，跨会话隔离由所有权结构保证。装载限流从阻塞信号量改为原子计数轮询，消除背压死锁类；修复 MainWindow 析构双重释放。
+
+### Testing
+
+- [OK] ctest 10/10（新增会话测试 3 组）；diff-check 通过
+
+### Status
+
+[OK] **M13 完成。下一步 M14 标签页模型**
