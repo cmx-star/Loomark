@@ -14,6 +14,9 @@
 #include <QPlainTextEdit>
 #include "gui/document_session.h"
 #include <QTabBar>
+#include <QDockWidget>
+#include <QFileSystemModel>
+#include <QTreeView>
 #include <ScintillaEditBase.h>
 #include <QPushButton>
 #include <QTextBrowser>
@@ -140,6 +143,30 @@ public:
     static bool closeSessionAt(MainWindow& window, int index)
     {
         return window.closeSession(window.sessions_[index]);
+    }
+
+    // ---- M15/M16 ----
+    static bool isSaveEnabled(const MainWindow& window)
+    {
+        return window.saveAction_->isEnabled();
+    }
+    static bool isReloadEnabled(const MainWindow& window)
+    {
+        return window.reloadAction_->isEnabled();
+    }
+    static bool isFindEnabled(const MainWindow& window)
+    {
+        return window.findToggleAction_->isEnabled();
+    }
+    static QStringList recentFiles(const MainWindow& window)
+    {
+        return window.recentFiles_;
+    }
+    static void openWorkspaceDir(MainWindow& window, const QString& dir)
+    {
+        window.workspaceModel_->setRootPath(dir);
+        window.workspaceTree_->setRootIndex(window.workspaceModel_->index(dir));
+        window.workspaceDock_->show();
     }
 
     static void shutdown(MainWindow& window)
@@ -352,6 +379,56 @@ void testTabsDedupSwitchAndClose(
     drainBackground(window);
 }
 
+void testCommandMatrixAndRecents(
+    mqt::gui::MainWindow& window, const std::filesystem::path& root)
+{
+    // M16 启停矩阵：独立窗口从空态开始验证
+    {
+        mqt::gui::MainWindow fresh;
+        mqt::gui::MainWindowTestAccess::disableUpdateChecks(fresh);
+        require(!mqt::gui::MainWindowTestAccess::isSaveEnabled(fresh),
+            "fresh window must disable save");
+        require(!mqt::gui::MainWindowTestAccess::isReloadEnabled(fresh),
+            "fresh window must disable reload");
+        require(!mqt::gui::MainWindowTestAccess::isFindEnabled(fresh),
+            "fresh window must disable find");
+
+        const auto path = root / "cmd-matrix.md";
+        writeTextFile(path, "command matrix");
+        require(mqt::gui::MainWindowTestAccess::load(fresh, path),
+            "open for command matrix");
+        require(mqt::gui::MainWindowTestAccess::isReloadEnabled(fresh),
+            "reload enabled with an open document");
+        require(mqt::gui::MainWindowTestAccess::isFindEnabled(fresh),
+            "find enabled for normal tier session");
+        require(!mqt::gui::MainWindowTestAccess::isSaveEnabled(fresh),
+            "save disabled while clean");
+        mqt::gui::MainWindowTestAccess::appendToSessionAt(fresh, 0, " dirty");
+        require(mqt::gui::MainWindowTestAccess::isSaveEnabled(fresh),
+            "save enabled while dirty");
+    }
+
+    // M15 最近文件：去重 + 最新在前
+    const auto rec1 = root / "recent-one.md";
+    const auto rec2 = root / "recent-two.md";
+    writeTextFile(rec1, "r1");
+    writeTextFile(rec2, "r2");
+    require(mqt::gui::MainWindowTestAccess::load(window, rec1), "open recent 1");
+    require(mqt::gui::MainWindowTestAccess::load(window, rec2), "open recent 2");
+    require(mqt::gui::MainWindowTestAccess::load(window, rec1), "reopen recent 1");
+    const auto recents = mqt::gui::MainWindowTestAccess::recentFiles(window);
+    require(recents.size() >= 2, "recent files recorded");
+    // 去重路径不重复记录：最新「新打开」的是 rec2
+    require(recents.front() == QString::fromStdString(rec2.string()),
+        "most recent file first");
+    require(recents.count(QString::fromStdString(rec1.string())) == 1,
+        "recent files must be deduplicated");
+
+    // M15 工作区：设置根目录
+    mqt::gui::MainWindowTestAccess::openWorkspaceDir(window, QString::fromStdString(root.string()));
+    drainBackground(window);
+}
+
 void testStaleIndexCannotReplaceNormalPreview(
     mqt::gui::MainWindow& window, const std::filesystem::path& root)
 {
@@ -365,6 +442,12 @@ void testStaleIndexCannotReplaceNormalPreview(
     const auto normalPath = root / "current-normal.md";
     writeBinary(normalPath, "# NORMAL_CURRENT_MARKER\n");
 
+    // 前置自建：确保处于 windowed 模式（不再依赖前序测试状态）
+    if (!mqt::gui::MainWindowTestAccess::windowed(window)) {
+        require(mqt::gui::MainWindowTestAccess::configureWindowed(window, largePath),
+            "setup must enter windowed mode");
+        drainBackground(window);
+    }
     const auto previousPath = mqt::gui::MainWindowTestAccess::currentPath(window);
     answerNextQuestion(QMessageBox::No);
     require(!mqt::gui::MainWindowTestAccess::load(window, largePath),
@@ -547,6 +630,7 @@ int main(int argc, char** argv)
         mqt::gui::MainWindow window;
         mqt::gui::MainWindowTestAccess::disableUpdateChecks(window);
         testUnchangedWindowSavePreservesBytes(window, root);
+        testCommandMatrixAndRecents(window, root);
         testStaleIndexCannotReplaceNormalPreview(window, root);
         testTabsDedupSwitchAndClose(window, root);
         testNormalBackendSaveRoundTrip(window, root);

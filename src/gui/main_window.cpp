@@ -22,6 +22,9 @@
 #include <QLineEdit>
 #include <QDebug>
 #include <QDesktopServices>
+#include <QDockWidget>
+#include <QFileSystemModel>
+#include <QTreeView>
 #include <QFileDialog>
 #include <QFrame>
 #include <QFontDatabase>
@@ -37,6 +40,7 @@
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QScrollBar>
+#include <QSettings>
 #include <QSize>
 #include <QSignalBlocker>
 #include <QSizePolicy>
@@ -388,23 +392,23 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
     toolBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     toolBar->setIconSize(QSize(20, 20));
 
-    auto* openAction = new QAction(themedIcon(QStringLiteral("folder_open")), QStringLiteral("打开"), this);
+    openAction_ = new QAction(themedIcon(QStringLiteral("folder_open")), QStringLiteral("打开"), this);
     saveAction_ = new QAction(themedIcon(QStringLiteral("save")), QStringLiteral("保存"), this);
-    auto* saveAsAction = new QAction(themedIcon(QStringLiteral("create_new_folder")), QStringLiteral("另存为"), this);
+    saveAsAction_ = new QAction(themedIcon(QStringLiteral("create_new_folder")), QStringLiteral("另存为"), this);
     reloadAction_ = new QAction(themedIcon(QStringLiteral("restart_alt")), QStringLiteral("重新载入"), this);
     auto* quitAction = new QAction(QStringLiteral("退出"), this);
     checkUpdatesAction_ = new QAction(QStringLiteral("检查更新"), this);
     auto* openLogDirectoryAction = new QAction(QStringLiteral("打开日志目录"), this);
 
-    openAction->setShortcut(QKeySequence::Open);
+    openAction_->setShortcut(QKeySequence::Open);
     saveAction_->setShortcut(QKeySequence::Save);
-    saveAsAction->setShortcut(QKeySequence::SaveAs);
+    saveAsAction_->setShortcut(QKeySequence::SaveAs);
     reloadAction_->setShortcut(QKeySequence::Refresh);
     quitAction->setShortcut(QKeySequence::Quit);
 
-    connect(openAction, &QAction::triggered, this, &MainWindow::openDocument);
+    connect(openAction_, &QAction::triggered, this, &MainWindow::openDocument);
     connect(saveAction_, &QAction::triggered, this, &MainWindow::saveDocument);
-    connect(saveAsAction, &QAction::triggered, this, &MainWindow::saveDocumentAs);
+    connect(saveAsAction_, &QAction::triggered, this, &MainWindow::saveDocumentAs);
     connect(reloadAction_, &QAction::triggered, this, &MainWindow::reloadDocument);
     connect(quitAction, &QAction::triggered, this, &QWidget::close);
     connect(checkUpdatesAction_, &QAction::triggered, this, [this] {
@@ -427,12 +431,18 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
         updateStatusBar();
     });
 
-    fileMenu->addAction(openAction);
+    fileMenu->addAction(openAction_);
     fileMenu->addAction(saveAction_);
-    fileMenu->addAction(saveAsAction);
+    fileMenu->addAction(saveAsAction_);
     fileMenu->addAction(reloadAction_);
     fileMenu->addSeparator();
+    recentMenu_ = fileMenu->addMenu(QStringLiteral("最近文件"));
+    recentMenu_->addAction(QStringLiteral("(空)"))->setEnabled(false);
+    fileMenu->addSeparator();
     fileMenu->addAction(quitAction);
+    auto* viewMenu = menuBar()->addMenu(QStringLiteral("视图"));
+    workspaceToggleAction_ = viewMenu->addAction(QStringLiteral("工作区面板"));
+    workspaceToggleAction_->setCheckable(true);
     helpMenu->addAction(checkUpdatesAction_);
     helpMenu->addAction(openLogDirectoryAction);
 
@@ -454,9 +464,9 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
     windowMenu_->addAction(winJumpAction);
     windowMenu_->setEnabled(false);
 
-    toolBar->addAction(openAction);
+    toolBar->addAction(openAction_);
     toolBar->addAction(saveAction_);
-    toolBar->addAction(saveAsAction);
+    toolBar->addAction(saveAsAction_);
     toolBar->addAction(reloadAction_);
 
     auto* status = statusBar();
@@ -564,6 +574,14 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
         }
     });
     addAction(findToggleAction_);
+
+    setupWorkspacePanel();
+    registerCommands();
+    {
+        QSettings settings;
+        recentFiles_ = settings.value(QStringLiteral("recentFiles")).toStringList();
+    }
+    rebuildRecentMenu();
 
     applyUiStyle();
     updatePreviewLayout();
@@ -823,6 +841,7 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
 
         launchInspectThread();
         dirty_ = false;
+        updateRecentFiles(path);
         if (backgroundLoadPending_) {
             updateWindowState();
             updateStatusBar();
@@ -1101,10 +1120,7 @@ bool MainWindow::writeCurrentDocument(const std::filesystem::path& path)
 void MainWindow::updateWindowState()
 {
     setWindowTitle(makeTitle(currentPath_, dirty_));
-    const bool loadPending = activeSession_ != nullptr &&
-        activeSession_->isLoadInProgress();
-    saveAction_->setEnabled(dirty_ && !loadPending);
-    reloadAction_->setEnabled(!currentPath_.empty());
+    updateCommands();
     if (windowMenu_) {
         windowMenu_->setEnabled(windowed());
     }
@@ -1195,6 +1211,117 @@ void MainWindow::updatePreviewLayout()
     preview_->document()->setDefaultFont(font);
     preview_->document()->setDocumentMargin(margin);
     preview_->document()->setTextWidth(std::max(320, width - margin * 2));
+}
+
+void MainWindow::updateRecentFiles(const std::filesystem::path& path)
+{
+    const QString entry = toQString(path);
+    recentFiles_.removeAll(entry);
+    recentFiles_.prepend(entry);
+    while (recentFiles_.size() > 10) {
+        recentFiles_.removeLast();
+    }
+    {
+        QSettings settings;
+        settings.setValue(QStringLiteral("recentFiles"), recentFiles_);
+    }
+    rebuildRecentMenu();
+}
+
+void MainWindow::rebuildRecentMenu()
+{
+    if (recentMenu_ == nullptr) {
+        return;
+    }
+    recentMenu_->clear();
+    if (recentFiles_.isEmpty()) {
+        auto* empty = recentMenu_->addAction(QStringLiteral("(空)"));
+        empty->setEnabled(false);
+        return;
+    }
+    for (const QString& entry : recentFiles_) {
+        recentMenu_->addAction(entry, this, [this, entry] {
+            const std::filesystem::path path = toPath(entry);
+            std::error_code ec;
+            if (!std::filesystem::exists(path, ec)) {
+                QMessageBox::warning(this, QStringLiteral("文件不存在"),
+                    QStringLiteral("最近文件已不存在：\n%1").arg(entry));
+                return;
+            }
+            loadDocument(path);
+        });
+    }
+}
+
+void MainWindow::openWorkspaceDirectory()
+{
+    const QString dir = QFileDialog::getExistingDirectory(this,
+        QStringLiteral("打开工作区目录"));
+    if (dir.isEmpty()) {
+        return;
+    }
+    QDir d(dir);
+    if (!d.isReadable()) {
+        QMessageBox::warning(this, QStringLiteral("无法打开工作区"),
+            QStringLiteral("目录不可读：\n%1").arg(dir));
+        return;
+    }
+    workspaceModel_->setRootPath(dir);
+    workspaceTree_->setRootIndex(workspaceModel_->index(dir));
+    workspaceDock_->show();
+    workspaceToggleAction_->setChecked(true);
+}
+
+void MainWindow::setupWorkspacePanel()
+{
+    workspaceDock_ = new QDockWidget(QStringLiteral("工作区"), this);
+    workspaceDock_->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    workspaceModel_ = new QFileSystemModel(workspaceDock_);
+    workspaceModel_->setRootPath(QString());
+    workspaceTree_ = new QTreeView(workspaceDock_);
+    workspaceTree_->setModel(workspaceModel_);
+    workspaceTree_->hideColumn(1);
+    workspaceTree_->hideColumn(2);
+    workspaceTree_->hideColumn(3);
+    workspaceDock_->setWidget(workspaceTree_);
+    addDockWidget(Qt::LeftDockWidgetArea, workspaceDock_);
+    workspaceDock_->hide();
+    connect(workspaceToggleAction_, &QAction::toggled, workspaceDock_, &QDockWidget::setVisible);
+    connect(workspaceDock_, &QDockWidget::visibilityChanged, workspaceToggleAction_,
+        &QAction::setChecked);
+    connect(workspaceTree_, &QTreeView::clicked, this, [this](const QModelIndex& index) {
+        if (!workspaceModel_->isDir(index)) {
+            loadDocument(toPath(workspaceModel_->filePath(index)));
+        }
+    });
+}
+
+void MainWindow::registerCommands()
+{
+    commands_.clear();
+    commands_.append({openAction_, [this] { return true; }});
+    commands_.append({saveAction_, [this] {
+        const bool hasDoc = windowed() ||
+            (activeSession_ != nullptr && activeSession_->hasBackend());
+        const bool loadPending = activeSession_ != nullptr &&
+            activeSession_->isLoadInProgress();
+        return hasDoc && dirty_ && !loadPending;
+    }});
+    commands_.append({saveAsAction_, [this] {
+        return windowed() || (activeSession_ != nullptr && activeSession_->hasBackend());
+    }});
+    commands_.append({reloadAction_, [this] { return !currentPath_.empty(); }});
+    commands_.append({findToggleAction_, [this] {
+        return !largeMode_ && activeSession_ != nullptr;
+    }});
+    commands_.append({workspaceToggleAction_, [this] { return true; }});
+}
+
+void MainWindow::updateCommands()
+{
+    for (const auto& [action, enabled] : commands_) {
+        action->setEnabled(enabled());
+    }
 }
 
 QString MainWindow::tabTextForSession(DocumentSession* session) const

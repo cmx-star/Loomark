@@ -6,6 +6,8 @@
 
 #include <atomic>
 #include <filesystem>
+#include <functional>
+#include <QPair>
 
 class QAction;
 class QCheckBox;
@@ -18,6 +20,9 @@ class QTimer;
 class QToolBar;
 class QStackedWidget;
 class QTabBar;
+class QDockWidget;
+class QFileSystemModel;
+class QTreeView;
 class ScintillaEditBase;
 
 namespace mqt::gui {
@@ -57,6 +62,14 @@ private:
     void toggleFindBar();
     void findNext();
     void replaceAll();
+    // M15/M16：最近文件、工作区与命令系统
+    void updateRecentFiles(const std::filesystem::path& path);
+    void rebuildRecentMenu();
+    void openWorkspaceDirectory();
+    void setupWorkspacePanel();
+    void registerCommands();
+    void updateCommands();
+
     // M14 标签页
     void activateSession(mqt::gui::DocumentSession* session);
     bool closeSession(mqt::gui::DocumentSession* session);
@@ -149,6 +162,16 @@ private:
 
     QAction* saveAction_ = nullptr;
     QAction* reloadAction_ = nullptr;
+    QAction* saveAsAction_ = nullptr;
+    QAction* workspaceToggleAction_ = nullptr;
+    QMenu* recentMenu_ = nullptr;
+    QStringList recentFiles_;
+    QDockWidget* workspaceDock_ = nullptr;
+    QFileSystemModel* workspaceModel_ = nullptr;
+    QTreeView* workspaceTree_ = nullptr;
+    QList<QPair<QAction*, std::function<bool()>>> commands_;
+
+    QAction* openAction_ = nullptr;
     QAction* checkUpdatesAction_ = nullptr;
     QTimer* previewTimer_ = nullptr;
     UpdateChecker* updateChecker_ = nullptr;
