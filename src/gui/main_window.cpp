@@ -718,6 +718,11 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
                     statusBar()->showMessage(
                         QStringLiteral("装载中 %1%").arg(percent));
                 });
+            connect(documentBackend_, &mqt::backend::ScintillaDocumentBackend::undoBudgetExceeded,
+                this, [this] {
+                    statusBar()->showMessage(
+                        QStringLiteral("撤销历史已达内存预算，已清空撤销记录"), 4000);
+                });
             connect(documentBackend_, &mqt::backend::ScintillaDocumentBackend::loadFinished,
                 this, [this](bool ok, const QString& error) {
                     Q_UNUSED(error);

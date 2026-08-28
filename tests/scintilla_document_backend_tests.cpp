@@ -790,6 +790,125 @@ void testSmallReplaceNeedsNoConfirmation(const std::filesystem::path& root)
         "small replace must apply");
 }
 
+// ---- M12：恢复点 / 外部指纹复核 / 撤销预算 ----
+
+std::string readWhole(const std::filesystem::path& path)
+{
+    std::ifstream input(path, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(input)),
+        std::istreambuf_iterator<char>());
+}
+
+void testSavePointDirtyTracking(const std::filesystem::path& root)
+{
+    const auto path = root / "savepoint.md";
+    writeText(path, "clean");
+
+    Fixture fx;
+    mqt::backend::ScintillaDocumentBackend backend(fx.editor, path);
+    require(!backend.isDirty(), "freshly loaded document must be clean");
+
+    mqt::core::TextEdit edit;
+    edit.start = 5; edit.end = 5; edit.newText = " edit";
+    const auto r = backend.apply({edit}, mqt::core::kInitialDocumentVersion);
+    require(r.error == mqt::core::ApplyError::None, "edit must apply");
+    require(backend.isDirty(), "edited document must be dirty");
+}
+
+void testSavePointAfterSave(const std::filesystem::path& root)
+{
+    const auto path = root / "savepoint2.md";
+    writeText(path, "clean");
+
+    Fixture fx;
+    mqt::backend::ScintillaDocumentBackend backend(fx.editor, path);
+    mqt::core::TextEdit edit;
+    edit.start = 5; edit.end = 5; edit.newText = " edit";
+    (void)backend.apply({edit}, mqt::core::kInitialDocumentVersion);
+    require(backend.isDirty(), "edited document must be dirty");
+
+    backend.save(nullptr);
+    require(!backend.isDirty(), "save must clear the dirty flag");
+
+    const auto versionBefore = backend.snapshot().version;
+    const auto snap = backend.reload();
+    require(!backend.isDirty(), "reload must be clean");
+    require(snap.version == versionBefore + 1, "reload bumps version");
+}
+
+void testExternalFingerprintReview(const std::filesystem::path& root)
+{
+    const auto path = root / "external-review.md";
+    writeText(path, "original content");
+
+    Fixture fx;
+    mqt::backend::ScintillaDocumentBackend backend(fx.editor, path);
+    require(!backend.isDirty(), "fresh load must be clean");
+
+    // 外部改盘（模拟另一个进程/编辑器写入）
+    writeText(path, "EXTERNALLY MODIFIED CONTENT");
+
+    bool threw = false;
+    std::string errorText;
+    try {
+        backend.save(nullptr);
+    } catch (const std::runtime_error& e) {
+        threw = true;
+        errorText = e.what();
+    }
+    require(threw, "save over external modification must be rejected");
+    require(errorText.find("changed on disk") != std::string::npos,
+        "rejection must explain the external modification");
+    require(readWhole(path) == "EXTERNALLY MODIFIED CONTENT",
+        "rejected save must not touch the externally modified file");
+
+    // 另存为新目标不受复核限制（内存内容仍为装载时的 original content）
+    const auto other = root / "external-review-out.md";
+    backend.saveAs(other);
+    require(readWhole(other) == "original content",
+        "saveAs must write the in-memory content");
+
+    // 重新装载外部修改后的磁盘内容，基线重建
+    backend.openSync(path);
+    require(!backend.isDirty(), "reload must be clean");
+    require(backend.read({mqt::core::ByteRange{0, 27}}) ==
+            "EXTERNALLY MODIFIED CONTENT",
+        "reload must pick up external changes");
+
+    // 基线重建后编辑与保存恢复正常
+    mqt::core::TextEdit edit;
+    edit.start = 27; edit.end = 27; edit.newText = "!";
+    const auto r = backend.apply({edit}, backend.snapshot().version);
+    require(r.error == mqt::core::ApplyError::None, "edit must apply");
+    backend.save(nullptr);
+    require(readWhole(path) == "EXTERNALLY MODIFIED CONTENT!",
+        "post-reload save must persist the edit");
+}
+
+void testUndoBudget(const std::filesystem::path& root)
+{
+    const auto path = root / "undo-budget.md";
+    writeText(path, "seed");
+
+    Fixture fx;
+    mqt::backend::ScintillaDocumentBackend backend(fx.editor, path);
+    backend.setUndoBudgetBytes(16); // 极小预算便于测试
+
+    mqt::core::TextEdit edit;
+    edit.start = 4; edit.end = 4; edit.newText = std::string(64, 'x');
+    (void)backend.apply({edit}, mqt::core::kInitialDocumentVersion);
+    require(!backend.canUndo(), "budget exceeded must clear undo history");
+    require(backend.read({mqt::core::ByteRange{0, 68}}) ==
+            std::string("seed") + std::string(64, 'x'),
+        "undo budget clear must not alter content");
+
+    // 后续编辑仍正常
+    mqt::core::TextEdit edit2;
+    edit2.start = 0; edit2.end = 4; edit2.newText = "SEED";
+    const auto r = backend.apply({edit2}, backend.snapshot().version);
+    require(r.error == mqt::core::ApplyError::None, "edits keep working after budget clear");
+}
+
 void testApplyEmptyEditsKeepsVersion(const std::filesystem::path& root)
 {
     const auto path = root / "apply_empty.md";
@@ -846,6 +965,10 @@ int main(int argc, char** argv)
         {"SearchBatchCancelled", testSearchBatchCancelled},
         {"ReplaceConfirmationGate", testReplaceConfirmationGate},
         {"SmallReplaceNeedsNoConfirmation", testSmallReplaceNeedsNoConfirmation},
+        {"SavePointDirtyTracking", testSavePointDirtyTracking},
+        {"SavePointAfterSave", testSavePointAfterSave},
+        {"ExternalFingerprintReview", testExternalFingerprintReview},
+        {"UndoBudget", testUndoBudget},
     };
     try {
         const auto root = testRoot();

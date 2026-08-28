@@ -66,6 +66,18 @@ public:
     [[nodiscard]] const mqt::core::SparseLineIndex& lineIndex() const { return lineIndex_; }
     [[nodiscard]] std::uint64_t fingerprint() const { return fingerprint_; }
 
+    // ---- M12: save point, undo budget, external fingerprint check ----
+
+    /// True when the version drifted from the last save/load point.
+    [[nodiscard]] bool isDirty() const { return version_ != savedVersion_; }
+
+    /// Undo memory budget (bytes of inserted+deleted content tracked in the
+    /// undo history estimate). Exceeding it clears the undo history and emits
+    /// undoBudgetExceeded(); the on-disk save point is unaffected.
+    void setUndoBudgetBytes(std::uint64_t bytes) { undoBudgetBytes_ = bytes; }
+    [[nodiscard]] std::uint64_t undoBudgetBytes() const { return undoBudgetBytes_; }
+    [[nodiscard]] bool canUndo() const { return editor_.send(SCI_CANUNDO) != 0; }
+
     // ---- M11: batched search & confirmed bulk replace ----
 
     struct SearchBatchRequest {
@@ -100,6 +112,7 @@ public:
 signals:
     void loadProgress(std::uint64_t loadedBytes, std::uint64_t totalBytes);
     void loadFinished(bool ok, const QString& error);
+    void undoBudgetExceeded();
 
 private slots:
     void onLoadChunk(const QByteArray& bytes);
@@ -110,7 +123,10 @@ private slots:
     /// companions); only flags carrying InsertText|DeleteText are real
     /// content changes, so one operation yields exactly one version bump.
     /// Guarded while the backend itself mutates the document.
-    void onEditorModified(Scintilla::ModificationFlags type);
+    void onEditorModified(Scintilla::ModificationFlags type,
+        Scintilla::Position position, Scintilla::Position length);
+    /// Account a backend-driven edit into the undo memory estimate.
+    void chargeUndoBytes(std::uint64_t bytes);
 
 private:
     void loadFromDisk();
@@ -121,6 +137,11 @@ private:
     ScintillaLoadTask* loadTask_ = nullptr;
     mqt::core::SparseLineIndex lineIndex_;
     std::uint64_t fingerprint_ = 0;
+    // M12: save point & external-change baseline
+    mqt::core::DocumentVersion savedVersion_ = mqt::core::kInitialDocumentVersion;
+    std::uint64_t baselineFingerprint_ = 0;
+    std::uint64_t undoBudgetBytes_ = 64ULL << 20;
+    std::uint64_t undoBytesUsed_ = 0;
     std::filesystem::path path_;
     std::uint64_t bomOffset_ = 0;
     mqt::core::DocumentInfo info_{};

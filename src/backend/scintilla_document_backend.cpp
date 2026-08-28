@@ -5,6 +5,7 @@
 #include "core/file_tier.h"
 
 #include <QByteArray>
+#include <fstream>
 
 #include <algorithm>
 #include <deque>
@@ -266,6 +267,12 @@ mqt::core::ApplyResult ScintillaDocumentBackend::apply(std::vector<mqt::core::Te
     editor_.send(SCI_ENDUNDOACTION);
     mutatingDocument_ = false;
 
+    std::uint64_t undoDelta = 0;
+    for (const auto& edit : edits) {
+        undoDelta += (edit.end - edit.start) + edit.newText.size();
+    }
+    chargeUndoBytes(undoDelta);
+
     info_.sizeBytes = static_cast<std::uint64_t>(editor_.send(SCI_GETTEXTLENGTH));
     ++version_;
     return {mqt::core::ApplyError::None, version_};
@@ -377,6 +384,7 @@ mqt::core::DocumentSnapshot ScintillaDocumentBackend::reload()
 {
     loadFromDisk();
     ++version_;
+    savedVersion_ = version_; // reloaded content matches the disk baseline
     return snapshot();
 }
 
@@ -459,6 +467,10 @@ void ScintillaDocumentBackend::onLoadTaskFinished(bool ok, const QString& error)
             info_.newlineStyle = mqt::core::classifyNewlines(counts);
             info_.newlineStyleKnown = true;
         }
+        fingerprint_ = task->fingerprint();
+        baselineFingerprint_ = fingerprint_;
+        savedVersion_ = version_;
+        undoBytesUsed_ = 0;
         mutatingDocument_ = true;
         editor_.send(SCI_EMPTYUNDOBUFFER);
         mutatingDocument_ = false;
@@ -475,8 +487,10 @@ void ScintillaDocumentBackend::onLoadTaskFinished(bool ok, const QString& error)
     emit loadFinished(ok, error);
 }
 
-void ScintillaDocumentBackend::onEditorModified(Scintilla::ModificationFlags type)
+void ScintillaDocumentBackend::onEditorModified(Scintilla::ModificationFlags type,
+    Scintilla::Position position, Scintilla::Position length)
 {
+    (void)position;
     if (mutatingDocument_) {
         return;
     }
@@ -485,6 +499,24 @@ void ScintillaDocumentBackend::onEditorModified(Scintilla::ModificationFlags typ
                                 (type & Fl::DeleteText) != Fl(0);
     if (contentChanged) {
         ++version_;
+        if (length > 0) {
+            chargeUndoBytes(static_cast<std::uint64_t>(length));
+        }
+    }
+}
+
+void ScintillaDocumentBackend::chargeUndoBytes(std::uint64_t bytes)
+{
+    if (undoBudgetBytes_ == 0) {
+        return; // 0 = unlimited
+    }
+    undoBytesUsed_ += bytes;
+    if (undoBytesUsed_ > undoBudgetBytes_) {
+        undoBytesUsed_ = 0;
+        mutatingDocument_ = true;
+        editor_.send(SCI_EMPTYUNDOBUFFER);
+        mutatingDocument_ = false;
+        emit undoBudgetExceeded();
     }
 }
 
@@ -495,9 +527,8 @@ void ScintillaDocumentBackend::loadFromDisk()
     if (ec) {
         throw std::runtime_error("failed to read file size: " + path_.string());
     }
-    if (mqt::core::classifyDesktopFile(fileSize) != mqt::core::FileTier::Normal) {
-        throw std::runtime_error("file exceeds Normal tier limit: " + path_.string());
-    }
+    // Note: no tier policy here — the backend handles any size; tier gating
+    // (dialogs, windowed fallback) is a GUI-open concern.
 
     std::string raw = mqt::core::readRange(path_, {0, fileSize});
     bomOffset_ = 0;
@@ -515,6 +546,17 @@ void ScintillaDocumentBackend::loadFromDisk()
     info_.hasUtf8Bom = bomOffset_ > 0;
     info_.newlineStyle = mqt::core::NewlineStyle::None;
     info_.newlineStyleKnown = false;
+
+    mqt::core::FingerprintSink sink;
+    // 基线指纹对齐磁盘表示（含 BOM），与 saveTo 的 writtenFingerprint 同口径
+    if (bomOffset_ > 0) {
+        sink.update("\xEF\xBB\xBF");
+    }
+    sink.update(raw);
+    fingerprint_ = sink.value();
+    baselineFingerprint_ = fingerprint_;
+    savedVersion_ = version_;
+    undoBytesUsed_ = 0;
 }
 
 void ScintillaDocumentBackend::saveTo(const std::filesystem::path& path)
@@ -529,9 +571,37 @@ void ScintillaDocumentBackend::saveTo(const std::filesystem::path& path)
         throw std::runtime_error("insufficient disk space to save document");
     }
 
+    // M12 external-change review: the on-disk content must still match the
+    // baseline recorded at the last load/save. Saving over an externally
+    // modified file would silently destroy those changes. Save-as to a new
+    // target skips the review (overwriting an existing target is intent).
+    std::error_code existsEc;
+    if (path == path_ && std::filesystem::exists(path_, existsEc) && !existsEc) {
+        mqt::core::FingerprintSink diskSink;
+        std::ifstream diskInput(path_, std::ios::binary);
+        if (diskInput) {
+            std::string diskChunk(8ULL * mqt::core::kMiB, '\0');
+            while (diskInput.read(diskChunk.data(),
+                     static_cast<std::streamsize>(diskChunk.size())) ||
+                diskInput.gcount() > 0) {
+                diskSink.update(std::string_view(diskChunk.data(),
+                    static_cast<std::size_t>(diskInput.gcount())));
+                if (diskInput.eof()) {
+                    break;
+                }
+            }
+            if (diskSink.value() != baselineFingerprint_) {
+                throw std::runtime_error(
+                    "document changed on disk since the last save");
+            }
+        }
+    }
+
     mqt::core::AtomicFileWriter writer(path);
+    mqt::core::FingerprintSink writtenFingerprint;
     if (info_.hasUtf8Bom) {
         writer.write("\xEF\xBB\xBF");
+        writtenFingerprint.update("\xEF\xBB\xBF");
     }
     // Chunked extraction: never materialize a second full copy of the body.
     constexpr std::uint64_t kChunk = 8ULL * mqt::core::kMiB;
@@ -548,11 +618,19 @@ void ScintillaDocumentBackend::saveTo(const std::filesystem::path& path)
         if (got <= 0) {
             throw std::runtime_error("failed to extract document content");
         }
+        writtenFingerprint.update(std::string_view(buf.data(), static_cast<std::size_t>(got)));
         writer.write(std::string_view(buf.data(), static_cast<std::size_t>(got)));
         start += static_cast<std::uint64_t>(got);
     }
     writer.commit();
     info_.sizeBytes = length + (info_.hasUtf8Bom ? 3ULL : 0ULL);
+
+    // M12: settle the save point and the external-change baseline to the
+    // content that was just written.
+    fingerprint_ = writtenFingerprint.value();
+    baselineFingerprint_ = writtenFingerprint.value();
+    savedVersion_ = version_;
+    undoBytesUsed_ = 0;
 }
 
 void ScintillaDocumentBackend::setDocumentText(const std::string& bytes)
