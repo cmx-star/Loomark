@@ -200,3 +200,18 @@ searchBatch 分批搜索（上限/超时/取消）+ applyReplace 32MiB 确认门
 ### Status
 
 [OK] **F03 多文档工作区骨架达成（16/87 模块）。下一步批次 5：M17–M20 → F04**
+
+
+## Session 10: 批次 5 完成，F04 V0.1 Workspace 达成
+
+**Date**: 2026-08-29
+**Task**: 08-29-m17..m20
+**Branch**: `feat/large-file-windowed-gui`
+
+### Summary
+
+M17 会话持久化（标签路径/活动/光标）、M18 恢复快照（脏文档 2s 快照/保存清除/启动检测）、M19 文件监视（外部修改告警、网络盘回退）、M20 门禁（构建+ctest+打包冒烟）。验收口径按用户调整为编译+ctest+打包。
+
+### Status
+
+[OK] **F04 V0.1 Workspace 达成（20/87 模块）。下一步批次 6：M21 块模型**
