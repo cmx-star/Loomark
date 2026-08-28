@@ -67,6 +67,8 @@ namespace {
 constexpr int kFullPreviewCharLimit = 256 * 1024;
 constexpr int kLargePreviewCharLimit = 128 * 1024;
 constexpr std::uint64_t kWindowBytes = 2ULL * 1024ULL * 1024ULL;
+// Documents larger than this load through the background chunked loader.
+constexpr std::uint64_t kBackgroundLoadThreshold = 1ULL << 20;
 constexpr int kMaxIndexedPreviewChars = 192 * 1024;
 
 class MarkdownEditor final : public QPlainTextEdit {
@@ -661,9 +663,41 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
         applyTierUiMode();
 
         if (!largeMode_) {
-            // Normal tier: the Scintilla backend owns the fact source and
-            // loads the document (BOM bookkeeping included).
-            documentBackend_ = new mqt::backend::ScintillaDocumentBackend(*scintillaEditor_, path);
+            // Normal tier: the Scintilla backend owns the fact source.
+            // Files above the threshold stream in through the background
+            // chunked loader; the UI stays responsive meanwhile.
+            documentBackend_ = new mqt::backend::ScintillaDocumentBackend(*scintillaEditor_);
+            connect(documentBackend_, &mqt::backend::ScintillaDocumentBackend::loadProgress,
+                this, [this](std::uint64_t loaded, std::uint64_t total) {
+                    const int percent = total == 0
+                        ? 100
+                        : static_cast<int>((loaded * 100) / total);
+                    statusBar()->showMessage(
+                        QStringLiteral("装载中 %1%").arg(percent));
+                });
+            connect(documentBackend_, &mqt::backend::ScintillaDocumentBackend::loadFinished,
+                this, [this](bool ok, const QString& error) {
+                    Q_UNUSED(error);
+                    backgroundLoadPending_ = false;
+                    if (!ok) {
+                        dirty_ = false;
+                        updateWindowState();
+                        statusBar()->showMessage(QStringLiteral("装载已取消"), 2000);
+                        return;
+                    }
+                    dirty_ = false;
+                    refreshPreview();
+                    updateWindowState();
+                    updateStatusBar();
+                    statusBar()->showMessage(
+                        QStringLiteral("已打开 %1").arg(toQString(currentPath_)), 2000);
+                });
+            if (info.sizeBytes > kBackgroundLoadThreshold) {
+                backgroundLoadPending_ = true;
+                documentBackend_->startBackgroundLoad(path);
+            } else {
+                documentBackend_->openSync(path);
+            }
             windowStart_ = 0;
             windowEnd_ = info.sizeBytes;
         } else if (!readWindow(0)) {
@@ -673,6 +707,11 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
 
         launchInspectThread();
         dirty_ = false;
+        if (backgroundLoadPending_) {
+            updateWindowState();
+            updateStatusBar();
+            return true; // preview refresh happens when the load completes
+        }
         refreshPreview();
         updateWindowState();
         updateStatusBar();
@@ -846,6 +885,11 @@ bool MainWindow::writeCurrentDocument(const std::filesystem::path& path)
         // make sure the background classification finished before writing.
         completeInspection();
 
+        if (documentBackend_ != nullptr && documentBackend_->isLoadInProgress()) {
+            statusBar()->showMessage(QStringLiteral("装载中，暂不能保存"), 2000);
+            return false;
+        }
+
         if (!windowed()) {
             // Normal tier: the backend streams the Scintilla buffer to the
             // temp file and commits the atomic replace; no second full copy
@@ -937,7 +981,9 @@ bool MainWindow::writeCurrentDocument(const std::filesystem::path& path)
 void MainWindow::updateWindowState()
 {
     setWindowTitle(makeTitle(currentPath_, dirty_));
-    saveAction_->setEnabled(dirty_);
+    const bool loadPending = documentBackend_ != nullptr &&
+        documentBackend_->isLoadInProgress();
+    saveAction_->setEnabled(dirty_ && !loadPending);
     reloadAction_->setEnabled(!currentPath_.empty());
     if (windowMenu_) {
         windowMenu_->setEnabled(windowed());

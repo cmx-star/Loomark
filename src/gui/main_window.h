@@ -97,6 +97,7 @@ private:
     PreviewIndexThread* indexThread_ = nullptr;
     FileInspectThread* inspectThread_ = nullptr;
     std::uint64_t documentGeneration_ = 0;
+    bool backgroundLoadPending_ = false;
     QMenu* windowMenu_ = nullptr;
 
     // M09: Normal tier runs on the Scintilla backend (single fact source).

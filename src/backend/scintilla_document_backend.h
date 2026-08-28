@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/document_backend.h"
+#include "core/load_scanner.h"
 
 #include <ScintillaEditBase.h>
 
@@ -8,6 +9,8 @@
 #include <filesystem>
 
 namespace mqt::backend {
+
+class ScintillaLoadTask;
 
 /// IDocumentBackend implementation whose single source of truth is the byte
 /// buffer of a live ScintillaEditBase widget. The widget itself is NOT owned:
@@ -19,8 +22,10 @@ namespace mqt::backend {
 class ScintillaDocumentBackend final : public QObject, public mqt::core::IDocumentBackend {
     Q_OBJECT
 public:
-    /// Attach to an editor and load `path` into it. Throws for non-Normal
-    /// tier files (M09 scope; M10 replaces this with the chunked loader).
+    explicit ScintillaDocumentBackend(ScintillaEditBase& editor);
+    /// Attach to an editor and load `path` synchronously. Throws for
+    /// non-Normal tier files (M09 scope; use startBackgroundLoad for large
+    /// documents).
     ScintillaDocumentBackend(ScintillaEditBase& editor,
         const std::filesystem::path& path);
     ~ScintillaDocumentBackend() override;
@@ -41,7 +46,33 @@ public:
     void saveAs(const std::filesystem::path& path) override;
     mqt::core::DocumentSnapshot reload() override;
 
+    /// M10: attach `path` and load it through the background chunked loader.
+    /// UI thread stays responsive; consume loadProgress()/loadFinished().
+    /// Cancelled or failed loads leave an empty buffer.
+    bool startBackgroundLoad(const std::filesystem::path& path,
+        std::uint64_t blockSize = 0);
+    void cancelBackgroundLoad();
+    [[nodiscard]] bool isLoadInProgress() const { return loadTask_ != nullptr; }
+
+    /// Synchronous load of a small document (tests and tiny files).
+    void openSync(const std::filesystem::path& path)
+    {
+        path_ = path;
+        loadFromDisk();
+    }
+
+    /// Sparse line index and streaming fingerprint of the loaded content
+    /// (populated after a completed load; empty/0 before).
+    [[nodiscard]] const mqt::core::SparseLineIndex& lineIndex() const { return lineIndex_; }
+    [[nodiscard]] std::uint64_t fingerprint() const { return fingerprint_; }
+
+signals:
+    void loadProgress(std::uint64_t loadedBytes, std::uint64_t totalBytes);
+    void loadFinished(bool ok, const QString& error);
+
 private slots:
+    void onLoadChunk(const QByteArray& bytes);
+    void onLoadTaskFinished(bool ok, const QString& error);
     /// Any buffer change that did not go through apply()/load bumps the
     /// version (user typing, undo, paste, cut, ...). Scintilla emits several
     /// notifications per operation (InsertCheck / BeforeInsert / StartAction
@@ -56,6 +87,9 @@ private:
     void setDocumentText(const std::string& bytes);
 
     ScintillaEditBase& editor_;
+    ScintillaLoadTask* loadTask_ = nullptr;
+    mqt::core::SparseLineIndex lineIndex_;
+    std::uint64_t fingerprint_ = 0;
     std::filesystem::path path_;
     std::uint64_t bomOffset_ = 0;
     mqt::core::DocumentInfo info_{};

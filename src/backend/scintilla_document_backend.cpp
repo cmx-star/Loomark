@@ -1,5 +1,6 @@
 #include "backend/scintilla_document_backend.h"
 
+#include "backend/scintilla_load_task.h"
 #include "core/document_file.h"
 #include "core/file_tier.h"
 
@@ -55,14 +56,11 @@ struct CursorSample {
 
 } // namespace
 
-ScintillaDocumentBackend::ScintillaDocumentBackend(ScintillaEditBase& editor,
-    const std::filesystem::path& path)
+ScintillaDocumentBackend::ScintillaDocumentBackend(ScintillaEditBase& editor)
     : QObject(&editor)
     , editor_(editor)
-    , path_(path)
 {
     editor_.send(SCI_SETCODEPAGE, SC_CP_UTF8);
-    loadFromDisk();
 
     // Direct (same-thread) connection: Scintilla emits `modified`
     // synchronously during message processing, so the mutatingDocument_
@@ -71,7 +69,22 @@ ScintillaDocumentBackend::ScintillaDocumentBackend(ScintillaEditBase& editor,
         this, &ScintillaDocumentBackend::onEditorModified);
 }
 
-ScintillaDocumentBackend::~ScintillaDocumentBackend() = default;
+ScintillaDocumentBackend::ScintillaDocumentBackend(ScintillaEditBase& editor,
+    const std::filesystem::path& path)
+    : ScintillaDocumentBackend(editor)
+{
+    path_ = path;
+    loadFromDisk();
+}
+
+ScintillaDocumentBackend::~ScintillaDocumentBackend()
+{
+    if (loadTask_ != nullptr) {
+        loadTask_->cancel();
+        delete loadTask_;
+        loadTask_ = nullptr;
+    }
+}
 
 mqt::core::DocumentSnapshot ScintillaDocumentBackend::snapshot() const
 {
@@ -274,6 +287,101 @@ mqt::core::DocumentSnapshot ScintillaDocumentBackend::reload()
     loadFromDisk();
     ++version_;
     return snapshot();
+}
+
+bool ScintillaDocumentBackend::startBackgroundLoad(const std::filesystem::path& path,
+    std::uint64_t blockSize)
+{
+    std::error_code ec;
+    const auto fileSize = std::filesystem::file_size(path, ec);
+    if (ec) {
+        return false;
+    }
+    if (mqt::core::classifyDesktopFile(fileSize) == mqt::core::FileTier::Reject) {
+        return false;
+    }
+
+    if (loadTask_ != nullptr) {
+        loadTask_->cancel();
+    }
+    setDocumentText(std::string());
+
+    path_ = path;
+    bomOffset_ = 0;
+    lineIndex_ = mqt::core::SparseLineIndex{};
+    fingerprint_ = 0;
+    const auto fileInfo = mqt::core::statFile(path);
+    mqt::core::DocumentInfo info;
+    info.tier = fileInfo.tier;
+    info.sizeBytes = fileSize - (fileInfo.hasUtf8Bom ? 3ULL : 0ULL);
+    info.hasUtf8Bom = fileInfo.hasUtf8Bom;
+    info_ = info;
+
+    loadTask_ = new ScintillaLoadTask(path, blockSize, this);
+    connect(loadTask_, &ScintillaLoadTask::chunkReady,
+        this, &ScintillaDocumentBackend::onLoadChunk);
+    connect(loadTask_, &ScintillaLoadTask::progress,
+        this, [this](std::uint64_t loaded, std::uint64_t total) {
+            emit loadProgress(loaded, total);
+        });
+    connect(loadTask_, &ScintillaLoadTask::loadFinished,
+        this, &ScintillaDocumentBackend::onLoadTaskFinished);
+    loadTask_->start();
+    return true;
+}
+
+void ScintillaDocumentBackend::cancelBackgroundLoad()
+{
+    if (loadTask_ != nullptr) {
+        loadTask_->cancel();
+    }
+}
+
+void ScintillaDocumentBackend::onLoadChunk(const QByteArray& bytes)
+{
+    if (loadTask_ == nullptr) {
+        return;
+    }
+    if (!bytes.isEmpty()) {
+        mutatingDocument_ = true;
+        editor_.send(SCI_APPENDTEXT, static_cast<uptr_t>(bytes.size()),
+            reinterpret_cast<sptr_t>(const_cast<char*>(bytes.constData())));
+        mutatingDocument_ = false;
+    }
+    loadTask_->notifyConsumed();
+}
+
+void ScintillaDocumentBackend::onLoadTaskFinished(bool ok, const QString& error)
+{
+    ScintillaLoadTask* task = loadTask_;
+    loadTask_ = nullptr;
+    if (task == nullptr) {
+        return;
+    }
+
+    if (ok) {
+        lineIndex_ = task->lineIndex();
+        fingerprint_ = task->fingerprint();
+        const auto counts = task->newlineCounts();
+        info_.sizeBytes = static_cast<std::uint64_t>(editor_.send(SCI_GETTEXTLENGTH));
+        if (mqt::core::newlineStyleKnown(counts)) {
+            info_.newlineStyle = mqt::core::classifyNewlines(counts);
+            info_.newlineStyleKnown = true;
+        }
+        mutatingDocument_ = true;
+        editor_.send(SCI_EMPTYUNDOBUFFER);
+        mutatingDocument_ = false;
+    } else {
+        // Cancelled or failed: deterministic cleanup leaves an empty buffer
+        // and empty metadata.
+        setDocumentText(std::string());
+        lineIndex_ = mqt::core::SparseLineIndex{};
+        fingerprint_ = 0;
+        info_ = mqt::core::DocumentInfo{};
+        bomOffset_ = 0;
+    }
+    task->deleteLater();
+    emit loadFinished(ok, error);
 }
 
 void ScintillaDocumentBackend::onEditorModified(Scintilla::ModificationFlags type)

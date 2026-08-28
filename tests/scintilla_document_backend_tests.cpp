@@ -6,6 +6,7 @@
 #include <ScintillaEditBase.h>
 
 #include <QApplication>
+#include <QElapsedTimer>
 
 #include <atomic>
 #include <filesystem>
@@ -501,6 +502,138 @@ void testApplySingleUndoGroup(const std::filesystem::path& root)
         "one apply() must collapse into a single undo group");
 }
 
+// ---- M10：后台分块装载 ----
+
+void waitForLoadFinished(mqt::backend::ScintillaDocumentBackend& backend,
+    bool* finished, bool* ok)
+{
+    QElapsedTimer timer;
+    while (!*finished && timer.elapsed() < 10000) {
+        QApplication::processEvents(QEventLoop::AllEvents, 5);
+    }
+    Q_UNUSED(ok);
+}
+
+void testBackgroundLoadContentAndMetadata(const std::filesystem::path& root)
+{
+    const auto path = root / "bg-load.md";
+    // ~200 KiB，混入 CRLF 与多字节字符，验证分块边界
+    std::string body;
+    for (int i = 0; i < 20000; ++i) {
+        body += (i % 50 == 0) ? std::string("行\xe4\xb8\xad\r\n")
+                              : std::string("line of text\n");
+    }
+    const std::string content = "\xEF\xBB\xBF" + body;
+    {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        output << content;
+    }
+
+    Fixture fx;
+    mqt::backend::ScintillaDocumentBackend backend(fx.editor, path);
+    backend.openSync(path);
+    const auto expected = backend.read({mqt::core::ByteRange{0, body.size()}});
+    const auto expectedFingerprint = [&] {
+        mqt::core::FingerprintSink sink;
+        sink.update(body);
+        return sink.value();
+    }();
+
+    // 后台重载同一文件
+    bool finished = false;
+    bool ok = false;
+    QString loadError;
+    std::uint64_t lastLoaded = 0, total = 0;
+    QObject::connect(&backend, &mqt::backend::ScintillaDocumentBackend::loadProgress,
+        [&](std::uint64_t loaded, std::uint64_t totalBytes) {
+            lastLoaded = loaded;
+            total = totalBytes;
+        });
+    QObject::connect(&backend, &mqt::backend::ScintillaDocumentBackend::loadFinished,
+        [&](bool success, const QString& error) {
+            finished = true;
+            ok = success;
+            loadError = error;
+        });
+    require(backend.startBackgroundLoad(path, 16 * 1024),
+        "background load must start");
+    int eventLoops = 0;
+    QElapsedTimer timer;
+    timer.start();
+    while (!finished && timer.elapsed() < 10000) {
+        QApplication::processEvents(QEventLoop::AllEvents, 5);
+        ++eventLoops;
+    }
+    require(finished && ok, ("background load must complete successfully, err=" +
+        loadError.toStdString()).c_str());
+    // 装载经过排队信号在事件循环中逐块递交；循环至少泵过一次即证明
+    // UI 线程未阻塞（大文件的响应性在 300MB 验收环节单独度量）。
+    require(eventLoops >= 1, "UI event loop must run during load");
+    require(backend.read({mqt::core::ByteRange{0, body.size()}}) == expected,
+        "background-loaded buffer must equal sync-loaded content");
+    require(backend.fingerprint() == expectedFingerprint,
+        "streaming fingerprint must match content fingerprint");
+    require(backend.lineIndex().lineCount() > 0, "line index populated");
+    require(backend.info().hasUtf8Bom, "BOM metadata preserved");
+    require(backend.info().newlineStyleKnown, "newline style known after load");
+    require(backend.snapshot().version == mqt::core::kInitialDocumentVersion,
+        "background load must not bump version");
+    Q_UNUSED(lastLoaded);
+    Q_UNUSED(total);
+}
+
+void testBackgroundLoadCancel(const std::filesystem::path& root)
+{
+    const auto path = root / "bg-cancel.md";
+    std::string body;
+    for (int i = 0; i < 24; ++i) {
+        body += std::string(1024 * 1024, 'x');
+        body += '\n';
+    }
+    {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        output << body;
+    }
+
+    Fixture fx;
+    mqt::backend::ScintillaDocumentBackend backend(fx.editor, path);
+    bool finished = false;
+    bool ok = true;
+    QObject::connect(&backend, &mqt::backend::ScintillaDocumentBackend::loadFinished,
+        [&](bool success, const QString&) {
+            finished = true;
+            ok = success;
+        });
+    require(backend.startBackgroundLoad(path, 1024 * 1024),
+        "background load must start");
+    backend.cancelBackgroundLoad();
+
+    QElapsedTimer timer;
+    timer.start();
+    while (!finished && timer.elapsed() < 10000) {
+        QApplication::processEvents(QEventLoop::AllEvents, 5);
+    }
+    require(finished, "cancelled load must still deliver loadFinished");
+    require(!ok, "cancelled load must report failure");
+
+    // 取消后缓冲必须为空且可立即重新打开（资源确定释放）
+    require(backend.info().sizeBytes == 0, "cancelled load must clear the buffer");
+
+    // 重复装载/取消循环稳定性
+    for (int i = 0; i < 3; ++i) {
+        bool done = false;
+        QObject::connect(&backend, &mqt::backend::ScintillaDocumentBackend::loadFinished,
+            [&](bool, const QString&) { done = true; });
+        require(backend.startBackgroundLoad(path, 1024 * 1024), "restart load");
+        backend.cancelBackgroundLoad();
+        QElapsedTimer t2;
+        while (!done && t2.elapsed() < 10000) {
+            QApplication::processEvents(QEventLoop::AllEvents, 5);
+        }
+        require(done, "repeated cancel must finish promptly");
+    }
+}
+
 void testApplyEmptyEditsKeepsVersion(const std::filesystem::path& root)
 {
     const auto path = root / "apply_empty.md";
@@ -549,6 +682,8 @@ int main(int argc, char** argv)
         {"ExternalBufferChangeBumpsVersion", testExternalBufferChangeBumpsVersion},
         {"ApplySingleUndoGroup", testApplySingleUndoGroup},
         {"ApplyEmptyEditsKeepsVersion", testApplyEmptyEditsKeepsVersion},
+        {"BackgroundLoadContentAndMetadata", testBackgroundLoadContentAndMetadata},
+        {"BackgroundLoadCancel", testBackgroundLoadCancel},
     };
     try {
         const auto root = testRoot();

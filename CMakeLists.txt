@@ -292,9 +292,20 @@ if(MQT_BUILD_SCINTILLA_EXAMPLE AND scintilla_POPULATED)
     )
     set_target_properties(markdown_qt_scintilla_bench PROPERTIES AUTOMOC ON)
 
+    add_executable(markdown_qt_scintilla_loader_verify
+        examples/scintilla_prototype/loader_verify.cpp
+    )
+    target_link_libraries(markdown_qt_scintilla_loader_verify
+        PRIVATE
+            markdown_qt_backend
+            Qt6::Widgets
+    )
+    set_target_properties(markdown_qt_scintilla_loader_verify PROPERTIES AUTOMOC ON)
+
     # M09: ScintillaDocumentBackend — IDocumentBackend 实现包装可见编辑器实例
     add_library(markdown_qt_backend
         src/backend/scintilla_document_backend.cpp
+        src/backend/scintilla_load_task.cpp
     )
     target_link_libraries(markdown_qt_backend
         PUBLIC
