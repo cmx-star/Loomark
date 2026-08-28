@@ -1350,7 +1350,6 @@ void MainWindow::saveSessionState()
         cursorList.append(QStringList{p, QString::number(pos)});
     }
     settings.setValue(QStringLiteral("session/cursors"), cursorList);
-    fprintf(stderr, "DBG saveSession paths=%d active=%d\n", paths.size(), activeIndex);
 }
 
 void MainWindow::restoreSessionState()
@@ -1358,7 +1357,6 @@ void MainWindow::restoreSessionState()
     QSettings settings;
     const QStringList paths =
         settings.value(QStringLiteral("session/paths")).toStringList();
-    fprintf(stderr, "DBG restore paths=%d\n", paths.size());
     if (paths.isEmpty()) {
         return;
     }
@@ -1406,7 +1404,8 @@ void MainWindow::restoreSessionState()
     if (!leftovers.isEmpty()) {
         statusBar()->showMessage(
             QStringLiteral("检测到 %1 个未保存编辑快照，可在 %2 中找回")
-                .arg(leftovers.size()).arg(recoveryDir()), 10000);
+                .arg(static_cast<int>(leftovers.size())).arg(recoveryDir()), 10000);
+
     }
     Q_UNUSED(activeRestored);
 }
@@ -1492,7 +1491,7 @@ void MainWindow::onSessionFileChanged(const QString& path)
 void MainWindow::registerCommands()
 {
     commands_.clear();
-    commands_.append({openAction_, [this] { return true; }});
+    commands_.append({openAction_, [] { return true; }});
     commands_.append({saveAction_, [this] {
         const bool hasDoc = windowed() ||
             (activeSession_ != nullptr && activeSession_->hasBackend());
@@ -1507,7 +1506,7 @@ void MainWindow::registerCommands()
     commands_.append({findToggleAction_, [this] {
         return !largeMode_ && activeSession_ != nullptr;
     }});
-    commands_.append({workspaceToggleAction_, [this] { return true; }});
+    commands_.append({workspaceToggleAction_, [] { return true; }});
 }
 
 void MainWindow::updateCommands()

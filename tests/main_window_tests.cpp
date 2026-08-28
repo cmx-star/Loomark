@@ -485,10 +485,6 @@ void testSessionPersistenceAndRecovery(
             QApplication::processEvents(QEventLoop::AllEvents, 20);
         }
         if (mqt::gui::MainWindowTestAccess::recoverySnapshots(w2).isEmpty()) {
-            std::cerr << "DBG recoveryDir=" 
-                      << mqt::gui::MainWindowTestAccess::recoveryDirOf(w2).toStdString()
-                      << " dirty=" << mqt::gui::MainWindowTestAccess::isSessionDirtyAt(w2, idx)
-                      << "\n";
         }
         require(!mqt::gui::MainWindowTestAccess::recoverySnapshots(w2).isEmpty(),
             "dirty document must produce a recovery snapshot");

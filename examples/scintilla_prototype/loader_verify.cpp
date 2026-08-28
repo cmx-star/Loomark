@@ -121,7 +121,7 @@ int main(int argc, char* argv[])
             offset = r.nextOffset;
         }
         printf("search: hits=%llu batches=%d elapsedMs=%lld\n",
-            (unsigned long long)totalHits, batches, timer.elapsed());
+            (unsigned long long)totalHits, static_cast<int>(batches), timer.elapsed());
 
         // 取消验证：预置取消标志，必须立即返回
         std::atomic_bool cancel{true};
@@ -230,7 +230,7 @@ int main(int argc, char* argv[])
         const auto bufferLen = editor.send(SCI_GETTEXTLENGTH);
         printf("f02: diskSize=%llu bufferLen=%lld markerHits=%u\n",
             (unsigned long long)diskSize, (long long)bufferLen,
-            markerAfter.hits.size());
+            static_cast<unsigned>(markerAfter.hits.size()));
         const bool pass = snap.version > r.newVersion &&
             markerAfter.hits.size() == 1 &&
             diskSize == (unsigned long long)bufferLen;
