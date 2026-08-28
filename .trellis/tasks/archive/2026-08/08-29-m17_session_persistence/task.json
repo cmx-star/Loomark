@@ -3,7 +3,7 @@
   "name": "m17_session_persistence",
   "title": "M17 会话持久化",
   "description": "批次5 M17：工作区标签路径/活动标签/光标位置持久化与启动恢复（Normal 档自动恢复）。",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "cmx",
   "assignee": "cmx",
   "createdAt": "2026-08-29",
-  "completedAt": null,
+  "completedAt": "2026-08-29",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -22,5 +22,7 @@
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "status": "completed"
+  }
 }
