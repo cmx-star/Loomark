@@ -17,6 +17,7 @@ class QTextBrowser;
 class QTimer;
 class QToolBar;
 class QStackedWidget;
+class QTabBar;
 class ScintillaEditBase;
 
 namespace mqt::gui {
@@ -56,6 +57,14 @@ private:
     void toggleFindBar();
     void findNext();
     void replaceAll();
+    // M14 标签页
+    void activateSession(mqt::gui::DocumentSession* session);
+    bool closeSession(mqt::gui::DocumentSession* session);
+    void updateTabForSession(mqt::gui::DocumentSession* session);
+    [[nodiscard]] QString tabTextForSession(mqt::gui::DocumentSession* session) const;
+    void enterEmptyState();
+    [[nodiscard]] mqt::gui::DocumentSession* sessionForPath(
+        const std::filesystem::path& path) const;
     void checkForUpdates(bool userInitiated);
     void openLogDirectory();
     bool loadDocument(const std::filesystem::path& path);
@@ -111,10 +120,13 @@ private:
     bool backgroundLoadPending_ = false;
     QMenu* windowMenu_ = nullptr;
 
-    // M13: each open document lives in its own DocumentSession (own editor
-    // + backend). The QPlainTextEdit editor remains the windowed large-file
-    // surface and the empty-state fallback.
+    // M13/M14: each open document lives in its own DocumentSession (own
+    // editor + backend); the tab bar switches between them. The
+    // QPlainTextEdit editor remains the windowed large-file surface and the
+    // empty-state fallback.
     QStackedWidget* editorStack_ = nullptr;
+    QList<DocumentSession*> sessions_;
+    QTabBar* tabBar_ = nullptr;
     DocumentSession* activeSession_ = nullptr;
 
     QPlainTextEdit* editor_ = nullptr;

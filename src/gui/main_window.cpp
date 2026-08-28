@@ -43,6 +43,7 @@
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QTextBrowser>
 #include <QTextBlock>
 #include <QTextDocument>
@@ -305,7 +306,11 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
     setMinimumSize(980, 680);
     resize(1380, 860);
 
-    auto* splitter = new QSplitter(Qt::Horizontal, this);
+    auto* central = new QWidget(this);
+    auto* centralLayout = new QVBoxLayout(central);
+    centralLayout->setContentsMargins(0, 0, 0, 0);
+    centralLayout->setSpacing(0);
+    auto* splitter = new QSplitter(central);
     editor_ = new MarkdownEditor(splitter);
     preview_ = new QTextBrowser(splitter);
     editor_->setPlaceholderText(QStringLiteral("打开文件开始编辑..."));
@@ -334,7 +339,47 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
     splitter->setStretchFactor(1, 1);
     splitter->setSizes({680, 700});
     splitter->setHandleWidth(1);
-    setCentralWidget(splitter);
+    tabBar_ = new QTabBar(central);
+    tabBar_->setMovable(true);
+    tabBar_->setTabsClosable(true);
+    tabBar_->setExpanding(false);
+    tabBar_->setVisible(false);
+    centralLayout->addWidget(tabBar_);
+    centralLayout->addWidget(splitter, 1);
+    connect(tabBar_, &QTabBar::currentChanged, this, [this](int index) {
+        if (index >= 0 && index < sessions_.size()) {
+            activateSession(sessions_[index]);
+        }
+    });
+    connect(tabBar_, &QTabBar::tabCloseRequested, this, [this](int index) {
+        if (index >= 0 && index < sessions_.size()) {
+            closeSession(sessions_[index]);
+        }
+    });
+    tabBar_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(tabBar_, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        const int index = tabBar_->tabAt(pos);
+        if (index < 0 || index >= sessions_.size()) {
+            return;
+        }
+        QMenu menu(this);
+        const bool pinned = tabBar_->tabData(index).toBool();
+        QAction* pinAction = menu.addAction(pinned ? QStringLiteral("取消固定")
+                                                   : QStringLiteral("固定标签页"));
+        if (menu.exec(tabBar_->mapToGlobal(pos)) == pinAction) {
+            if (!pinned) {
+                tabBar_->setTabData(index, true);
+                auto* session = sessions_.takeAt(index);
+                sessions_.prepend(session);
+                tabBar_->moveTab(index, 0);
+                tabBar_->setTabText(0, tabTextForSession(session));
+            } else {
+                tabBar_->setTabData(index, false);
+                tabBar_->setTabText(index, tabTextForSession(sessions_[index]));
+            }
+        }
+    });
+    setCentralWidget(central);
 
     auto* fileMenu = menuBar()->addMenu(QStringLiteral("文件"));
     auto* helpMenu = menuBar()->addMenu(QStringLiteral("帮助"));
@@ -538,6 +583,16 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
+    // M14: confirm every dirty tab before accepting the close.
+    for (auto* session : QList<DocumentSession*>(sessions_)) {
+        if (session->isDirty()) {
+            activateSession(session);
+            if (!maybeSaveChanges()) {
+                event->ignore();
+                return;
+            }
+        }
+    }
     if (!maybeSaveChanges()) {
         event->ignore();
         return;
@@ -672,7 +727,22 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
             indexThread_->cancel();
         }
         qInfo() << "LD2 closeActiveSession";
-        closeActiveSession();
+        if (!nextLargeMode) {
+            // M14 同路径去重：已打开的 Normal 文档直接激活既有标签
+            if (auto* existing = sessionForPath(path)) {
+                if (largeMode_) {
+                    largeMode_ = false;
+                }
+                setCurrentPath(path, info);
+                windowStart_ = 0;
+                windowEnd_ = info.sizeBytes;
+                applyTierUiMode();
+                activateSession(existing);
+                statusBar()->showMessage(
+                    QStringLiteral("已切换到 %1").arg(toQString(path)), 2000);
+                return true;
+            }
+        }
         largeMode_ = nextLargeMode;
         setCurrentPath(path, info);
         ++documentGeneration_;
@@ -685,7 +755,10 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
             // above the threshold stream in through the background chunked
             // loader; the UI stays responsive meanwhile.
             activeSession_ = new DocumentSession(++documentGeneration_, this);
+            sessions_.append(activeSession_);
             editorStack_->addWidget(&activeSession_->editor());
+            tabBar_->addTab(tabTextForSession(activeSession_));
+            tabBar_->setVisible(!largeMode_);
             connect(activeSession_, &DocumentSession::loadProgress,
                 this, [this](std::uint64_t loaded, std::uint64_t total) {
                     const int percent = total == 0
@@ -700,16 +773,25 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
                         QStringLiteral("撤销历史已达内存预算，已清空撤销记录"), 4000);
                 });
             connect(activeSession_, &DocumentSession::contentsChanged, this, [this] {
-                dirty_ = true;
-                updateWindowState();
-                updateStatusBar();
-                if (previewTimer_ && !largeMode_) {
-                    previewTimer_->start();
+                auto* session = qobject_cast<DocumentSession*>(sender());
+                if (session != nullptr) {
+                    updateTabForSession(session);
+                }
+                if (session == activeSession_) {
+                    dirty_ = true;
+                    updateWindowState();
+                    updateStatusBar();
+                    if (previewTimer_ && !largeMode_) {
+                        previewTimer_->start();
+                    }
                 }
             });
             connect(activeSession_, &DocumentSession::loadFinished,
                 this, [this](bool ok, const QString& error) {
                     Q_UNUSED(error);
+                    if (sender() != activeSession_) {
+                        return; // 用户已切走；装载结果归各自会话
+                    }
                     backgroundLoadPending_ = false;
                     if (!ok) {
                         dirty_ = false;
@@ -944,6 +1026,7 @@ bool MainWindow::writeCurrentDocument(const std::filesystem::path& path)
             info.newlineStyleKnown = currentInfo_.newlineStyleKnown;
             setCurrentPath(path, info);
             dirty_ = false;
+            updateTabForSession(activeSession_);
             updateWindowState();
             updateStatusBar();
             statusBar()->showMessage(QStringLiteral("已保存 %1").arg(toQString(path)), 2000);
@@ -1112,6 +1195,122 @@ void MainWindow::updatePreviewLayout()
     preview_->document()->setDefaultFont(font);
     preview_->document()->setDocumentMargin(margin);
     preview_->document()->setTextWidth(std::max(320, width - margin * 2));
+}
+
+QString MainWindow::tabTextForSession(DocumentSession* session) const
+{
+    const QString name = toQString(session->path().filename());
+    return session->isDirty() ? QStringLiteral("• %1").arg(name) : name;
+}
+
+void MainWindow::updateTabForSession(DocumentSession* session)
+{
+    const int index = sessions_.indexOf(session);
+    if (index >= 0) {
+        tabBar_->setTabText(index, tabTextForSession(session));
+    }
+}
+
+mqt::gui::DocumentSession* MainWindow::sessionForPath(
+    const std::filesystem::path& path) const
+{
+    for (auto* session : sessions_) {
+        if (session->hasBackend() && session->path() == path) {
+            return session;
+        }
+    }
+    return nullptr;
+}
+
+void MainWindow::activateSession(DocumentSession* session)
+{
+    if (session == nullptr || session == activeSession_) {
+        return;
+    }
+    activeSession_ = session;
+    if (largeMode_) {
+        largeMode_ = false;
+    }
+    applyTierUiMode();
+    const auto& info = session->backend().info();
+    mqt::core::FileInfo fileInfo;
+    fileInfo.path = session->path();
+    fileInfo.sizeBytes = info.sizeBytes;
+    fileInfo.tier = info.tier;
+    fileInfo.hasUtf8Bom = info.hasUtf8Bom;
+    fileInfo.newlineStyle = info.newlineStyle;
+    fileInfo.newlineStyleKnown = info.newlineStyleKnown;
+    setCurrentPath(session->path(), fileInfo);
+    dirty_ = session->isDirty();
+    backgroundLoadPending_ = session->isLoadInProgress();
+    tabBar_->setCurrentIndex(sessions_.indexOf(session));
+    updateWindowState();
+    updateStatusBar();
+    if (backgroundLoadPending_) {
+        return; // preview refresh happens when the load completes
+    }
+    refreshPreview();
+}
+
+bool MainWindow::closeSession(DocumentSession* session)
+{
+    if (session == nullptr) {
+        return false;
+    }
+    if (session->isDirty()) {
+        const QString name = toQString(session->path().filename());
+        const auto choice = QMessageBox::warning(this,
+            QStringLiteral("未保存更改"),
+            QStringLiteral("%1 有未保存的修改，是否保存？").arg(name),
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+            QMessageBox::Save);
+        if (choice == QMessageBox::Cancel) {
+            return false;
+        }
+        if (choice == QMessageBox::Save) {
+            session->save();
+            if (session->isDirty()) {
+                return false; // 保存失败，中止关闭
+            }
+        }
+    }
+
+    const int tabIndex = sessions_.indexOf(session);
+    const bool wasActive = session == activeSession_;
+    sessions_.removeOne(session);
+    editorStack_->removeWidget(&session->editor());
+    tabBar_->removeTab(tabIndex);
+    delete session;
+
+    if (sessions_.isEmpty()) {
+        if (!largeMode_) {
+            enterEmptyState();
+        }
+    } else if (wasActive) {
+        int next = tabIndex - 1;
+        if (next < 0) {
+            next = 0;
+        }
+        if (next > sessions_.size() - 1) {
+            next = sessions_.size() - 1;
+        }
+        activateSession(sessions_[next]);
+    }
+    return true;
+}
+
+void MainWindow::enterEmptyState()
+{
+    activeSession_ = nullptr;
+    dirty_ = false;
+    backgroundLoadPending_ = false;
+    currentPath_.clear();
+    currentInfo_ = {};
+    applyTierUiMode();
+    preview_->clear();
+    updateWindowState();
+    updateStatusBar();
+    statusBar()->showMessage(QStringLiteral("就绪"));
 }
 
 void MainWindow::toggleFindBar()
@@ -1314,6 +1513,7 @@ void MainWindow::applyTierUiMode()
     } else {
         editorStack_->setCurrentIndex(0);
     }
+    tabBar_->setVisible(!largeMode_ && !sessions_.isEmpty());
 }
 
 void MainWindow::closeActiveSession()

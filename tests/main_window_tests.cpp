@@ -13,6 +13,7 @@
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include "gui/document_session.h"
+#include <QTabBar>
 #include <ScintillaEditBase.h>
 #include <QPushButton>
 #include <QTextBrowser>
@@ -93,6 +94,52 @@ public:
     {
         window.activeSession_->editor().send(SCI_APPENDTEXT, text.size(),
             reinterpret_cast<Scintilla::sptr_t>(const_cast<char*>(text.data())));
+    }
+
+    // ---- M14 标签页 ----
+    static int sessionCount(const MainWindow& window)
+    {
+        return window.sessions_.size();
+    }
+    static void activateSessionAt(MainWindow& window, int index)
+    {
+        window.activateSession(window.sessions_[index]);
+    }
+    static bool isSessionDirtyAt(const MainWindow& window, int index)
+    {
+        return window.sessions_[index]->isDirty();
+    }
+    static int sessionIndexForPath(const MainWindow& window,
+        const std::filesystem::path& path)
+    {
+        for (int i = 0; i < window.sessions_.size(); ++i) {
+            if (window.sessions_[i]->path() == path) {
+                return i;
+            }
+        }
+        return -1;
+    }
+    static std::string sessionEditorContent(const MainWindow& window, int index)
+    {
+        auto& editor = window.sessions_[index]->editor();
+        const auto len = editor.send(SCI_GETTEXTLENGTH);
+        std::string out(static_cast<std::size_t>(len) + 1, '\0');
+        editor.send(SCI_GETTEXT, len + 1, reinterpret_cast<Scintilla::sptr_t>(out.data()));
+        out.resize(static_cast<std::size_t>(len));
+        return out;
+    }
+    static void appendToSessionAt(MainWindow& window, int index, std::string_view text)
+    {
+        window.sessions_[index]->editor().send(SCI_APPENDTEXT, text.size(),
+            reinterpret_cast<Scintilla::sptr_t>(const_cast<char*>(text.data())));
+    }
+    static QString tabTextAt(const MainWindow& window, int index)
+    {
+        return window.tabBar_->tabText(index);
+    }
+    static bool closeSessionAt(MainWindow& window, int index)
+    {
+        return window.closeSession(window.sessions_[index]);
     }
 
     static void shutdown(MainWindow& window)
@@ -243,6 +290,65 @@ void testNormalBackendSaveRoundTrip(
     require(edited.rfind("## APPENDED") == edited.size() - 11,
         "user edit made through the editor must persist on save");
 
+    drainBackground(window);
+}
+
+void writeTextFile(const std::filesystem::path& path, std::string_view text)
+{
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output << text;
+}
+
+void testTabsDedupSwitchAndClose(
+    mqt::gui::MainWindow& window, const std::filesystem::path& root)
+{
+    const auto file1 = root / "tab-one.md";
+    const auto file2 = root / "tab-two.md";
+    writeTextFile(file1, "FILE ONE");
+    writeTextFile(file2, "FILE TWO");
+
+    const int baseline = mqt::gui::MainWindowTestAccess::sessionCount(window);
+    require(mqt::gui::MainWindowTestAccess::load(window, file1),
+        "tab one must open");
+    require(mqt::gui::MainWindowTestAccess::sessionCount(window) == baseline + 1,
+        "one session added after first open");
+    require(mqt::gui::MainWindowTestAccess::load(window, file2),
+        "tab two must open");
+    require(mqt::gui::MainWindowTestAccess::sessionCount(window) == baseline + 2,
+        "two sessions added after second open");
+
+    // 同路径去重
+    require(mqt::gui::MainWindowTestAccess::load(window, file1),
+        "reopening must succeed");
+    require(mqt::gui::MainWindowTestAccess::sessionCount(window) == baseline + 2,
+        "same path must not open a duplicate session");
+
+    const int idx1 = mqt::gui::MainWindowTestAccess::sessionIndexForPath(window, file1);
+    const int idx2 = mqt::gui::MainWindowTestAccess::sessionIndexForPath(window, file2);
+    require(idx1 >= 0 && idx2 >= 0, "both sessions must be findable by path");
+
+    // 切换后各会话内容保持正确（不复制正文的结构性验证）
+    mqt::gui::MainWindowTestAccess::activateSessionAt(window, idx2);
+    require(mqt::gui::MainWindowTestAccess::sessionEditorContent(window, idx2) == "FILE TWO",
+        "session 2 content");
+    mqt::gui::MainWindowTestAccess::activateSessionAt(window, idx1);
+    require(mqt::gui::MainWindowTestAccess::sessionEditorContent(window, idx1) == "FILE ONE",
+        "session 1 content preserved across switch");
+
+    // 未保存标记
+    mqt::gui::MainWindowTestAccess::appendToSessionAt(window, idx1, " edited");
+    require(mqt::gui::MainWindowTestAccess::isSessionDirtyAt(window, idx1),
+        "edited session must be dirty");
+    require(mqt::gui::MainWindowTestAccess::tabTextAt(window, idx1).startsWith(
+                QStringLiteral("•")),
+        "dirty tab must show the bullet marker");
+
+    // 关闭脏标签 → Discard
+    answerNextQuestion(QMessageBox::Discard);
+    require(mqt::gui::MainWindowTestAccess::closeSessionAt(window, idx1),
+        "closing a dirty tab with discard must succeed");
+    require(mqt::gui::MainWindowTestAccess::sessionCount(window) == baseline + 1,
+        "one session remains");
     drainBackground(window);
 }
 
@@ -442,6 +548,7 @@ int main(int argc, char** argv)
         mqt::gui::MainWindowTestAccess::disableUpdateChecks(window);
         testUnchangedWindowSavePreservesBytes(window, root);
         testStaleIndexCannotReplaceNormalPreview(window, root);
+        testTabsDedupSwitchAndClose(window, root);
         testNormalBackendSaveRoundTrip(window, root);
         std::filesystem::remove_all(root);
         std::cout << "main window tests passed\n";
