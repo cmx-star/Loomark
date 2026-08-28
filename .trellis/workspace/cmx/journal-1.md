@@ -185,3 +185,18 @@ searchBatch 分批搜索（上限/超时/取消）+ applyReplace 32MiB 确认门
 ### Status
 
 [OK] **M14 完成。下一步 M15 Workspace 与最近文件**
+
+
+## Session 9: M15/M16 完成，F03 多文档工作区骨架达成
+
+**Date**: 2026-08-29
+**Task**: 08-29-m15/m16
+**Branch**: `feat/large-file-windowed-gui`
+
+### Summary
+
+工作区面板 + 最近文件 + 统一命令注册表。验收口径按用户调整为：编译无错 + ctest + 打包产物生成。
+
+### Status
+
+[OK] **F03 多文档工作区骨架达成（16/87 模块）。下一步批次 5：M17–M20 → F04**
