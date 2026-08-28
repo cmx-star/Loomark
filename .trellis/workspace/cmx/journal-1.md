@@ -166,3 +166,22 @@ searchBatch 分批搜索（上限/超时/取消）+ applyReplace 32MiB 确认门
 ### Status
 
 [OK] **M13 完成。下一步 M14 标签页模型**
+
+
+## Session 8: M14 标签页模型完成
+
+**Date**: 2026-08-29
+**Task**: 08-29-m14_tab_model
+**Branch**: `feat/large-file-windowed-gui`
+
+### Summary
+
+多标签落地：QTabBar + 会话列表，去重/脏标记/关闭确认/固定/拖拽排序；切换零拷贝。
+
+### Testing
+
+- [OK] ctest 10/10；标签测试覆盖去重/切换内容保持/脏标记/Discard 关闭
+
+### Status
+
+[OK] **M14 完成。下一步 M15 Workspace 与最近文件**
