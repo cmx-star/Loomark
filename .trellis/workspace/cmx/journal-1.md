@@ -65,3 +65,28 @@
 ### Status
 
 [OK] **批次 2 完成，待用户批准 D01（Scintilla HPND 依赖 + 批次 3 迁移范围）**
+
+
+## Session 3: D01 冻结 + 批次 3 启动，M09 完成
+
+**Date**: 2026-08-29
+**Task**: 08-28-m09_scintilla_backend
+**Branch**: `feat/large-file-windowed-gui`
+
+### Summary
+
+D01 决策按用户「推进项目整体到整体完成」指令以默认批准生效冻结（可否决回退）。M09 ScintillaDocumentBackend 全部验收通过，批次 3 首个模块落地。
+
+### Main Changes
+
+- `src/backend/scintilla_document_backend.{h,cpp}`：IDocumentBackend 全实现，Scintilla 为唯一事实源
+- GUI：QStackedWidget 双编辑器（NORMAL=Scintilla 后端，windowed=旧路径回退）；保存 8MiB 分块原子写
+- 修复隐藏编辑器 wrap 重排版卡死；契约测试 24 用例 + GUI 字节保真/编辑持久化用例
+
+### Testing
+
+- [OK] 构建 0 错误 0 警告（上游 1 处除外）；ctest 8/8；diff-check 通过；offscreen GUI 冒烟正常
+
+### Status
+
+[OK] **M09 完成。下一步 M10：分块 Loader 与稀疏行索引**
