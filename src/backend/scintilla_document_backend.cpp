@@ -447,7 +447,7 @@ void ScintillaDocumentBackend::onLoadChunk(const QByteArray& bytes)
             reinterpret_cast<sptr_t>(const_cast<char*>(bytes.constData())));
         mutatingDocument_ = false;
     }
-    loadTask_->notifyConsumed();
+    loadTask_->chunkConsumed();
 }
 
 void ScintillaDocumentBackend::onLoadTaskFinished(bool ok, const QString& error)

@@ -540,6 +540,25 @@ target_compile_options(markdown_qt_document_backend_tests
 
 add_test(NAME markdown_qt_document_backend_tests COMMAND markdown_qt_document_backend_tests)
 
+add_executable(markdown_qt_document_session_tests
+    tests/document_session_tests.cpp
+    src/gui/document_session.h
+    src/gui/document_session.cpp
+)
+target_link_libraries(markdown_qt_document_session_tests
+    PRIVATE
+        markdown_qt_backend
+        Qt6::Widgets
+)
+target_compile_definitions(markdown_qt_document_session_tests PRIVATE
+    -DSCINTILLA_QT=1
+)
+set_target_properties(markdown_qt_document_session_tests PROPERTIES AUTOMOC ON)
+add_test(NAME markdown_qt_document_session_tests COMMAND markdown_qt_document_session_tests)
+set_tests_properties(markdown_qt_document_session_tests PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
 add_executable(markdown_qt_load_scanner_tests
     tests/load_scanner_tests.cpp
 )

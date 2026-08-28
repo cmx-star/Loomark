@@ -1,8 +1,5 @@
 #include "backend/scintilla_load_task.h"
 
-#include <QSemaphore>
-
-#include <cstring>
 #include <fstream>
 #include <system_error>
 
@@ -19,8 +16,6 @@ ScintillaLoadTask::ScintillaLoadTask(std::filesystem::path path, std::uint64_t b
 ScintillaLoadTask::~ScintillaLoadTask()
 {
     cancelFlag_.store(true, std::memory_order_relaxed);
-    // Unblock a worker waiting for UI flow capacity so it can observe cancel.
-    flowSlots_.release();
     if (isRunning()) {
         wait();
     }
@@ -50,8 +45,13 @@ void ScintillaLoadTask::run()
     chunk.resize(blockSize_);
 
     while (rawLoaded < total) {
-        // Wait for the UI thread to drain a previous chunk; bounded backlog.
-        flowSlots_.acquire();
+        // Bounded backlog without a blocking primitive: poll until the UI
+        // thread drained enough chunks. Every wait re-checks the cancel flag,
+        // so this can never deadlock against a stalled consumer.
+        while (inFlight_.load(std::memory_order_relaxed) >= kMaxInFlight &&
+            !cancelFlag_.load(std::memory_order_relaxed)) {
+            QThread::msleep(1);
+        }
         if (cancelFlag_.load(std::memory_order_relaxed)) {
             cancelled = true;
             break;
@@ -87,6 +87,7 @@ void ScintillaLoadTask::run()
             newlineCounter_.feed(data);
             contentLoaded += data.size();
             emit progress(rawLoaded, total);
+            inFlight_.fetch_add(1, std::memory_order_relaxed);
             emit chunkReady(QByteArray(data.data(), static_cast<qsizetype>(data.size())));
         }
     }
