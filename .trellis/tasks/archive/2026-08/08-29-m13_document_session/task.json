@@ -3,7 +3,7 @@
   "name": "m13_document_session",
   "title": "M13 DocumentSession 会话层",
   "description": "批次4 M13：会话层管理路径/后端/版本/脏状态/档位/任务取消域；切换文档不串状态、不接收迟到结果。",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "cmx",
   "assignee": "cmx",
   "createdAt": "2026-08-29",
-  "completedAt": null,
+  "completedAt": "2026-08-29",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -22,5 +22,8 @@
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "completedAt": "2026-08-29",
+    "status": "completed"
+  }
 }
