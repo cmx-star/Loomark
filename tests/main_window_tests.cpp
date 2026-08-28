@@ -15,6 +15,8 @@
 #include "gui/document_session.h"
 #include <QTabBar>
 #include <QDockWidget>
+#include <QSettings>
+#include <QDir>
 #include <QFileSystemModel>
 #include <QTreeView>
 #include <ScintillaEditBase.h>
@@ -167,6 +169,30 @@ public:
         window.workspaceModel_->setRootPath(dir);
         window.workspaceTree_->setRootIndex(window.workspaceModel_->index(dir));
         window.workspaceDock_->show();
+    }
+
+    // ---- M17/M18 ----
+    static QString recoveryDirOf(const MainWindow& window)
+    {
+        return window.recoveryDir();
+    }
+    static void clearRecoveryDir(const MainWindow& window)
+    {
+        QDir(window.recoveryDir()).removeRecursively();
+    }
+    static QStringList recoverySnapshots(const MainWindow& window)
+    {
+        QDir dir(window.recoveryDir());
+        return dir.entryList(QStringList{QStringLiteral("session-*.md")}, QDir::Files);
+    }
+    static void clearSessionSettings()
+    {
+        QSettings settings;
+        settings.clear();
+    }
+    static void saveSessionState(MainWindow& window)
+    {
+        window.saveSessionState();
     }
 
     static void shutdown(MainWindow& window)
@@ -429,6 +455,69 @@ void testCommandMatrixAndRecents(
     drainBackground(window);
 }
 
+void testSessionPersistenceAndRecovery(
+    mqt::gui::MainWindow& window, const std::filesystem::path& root)
+{
+    Q_UNUSED(window);
+    QSettings settings;
+    settings.clear();
+
+    // 清理历史运行残留的恢复快照，保证断言只针对本次用例
+    mqt::gui::MainWindowTestAccess::clearRecoveryDir(window);
+
+    const auto path = root / "persist.md";
+    writeTextFile(path, "PERSIST CONTENT");
+
+    {
+        mqt::gui::MainWindow w2;
+        mqt::gui::MainWindowTestAccess::disableUpdateChecks(w2);
+        require(mqt::gui::MainWindowTestAccess::load(w2, path),
+            "persistence setup open");
+        const int idx = mqt::gui::MainWindowTestAccess::sessionIndexForPath(w2, path);
+        require(idx >= 0, "session opened for persistence test");
+
+        // M18：脏文档 2s 后生成恢复快照
+        mqt::gui::MainWindowTestAccess::appendToSessionAt(w2, idx, " dirty tail");
+        QElapsedTimer timer;
+        timer.start();
+        while (mqt::gui::MainWindowTestAccess::recoverySnapshots(w2).isEmpty() &&
+            timer.elapsed() < 4000) {
+            QApplication::processEvents(QEventLoop::AllEvents, 20);
+        }
+        if (mqt::gui::MainWindowTestAccess::recoverySnapshots(w2).isEmpty()) {
+            std::cerr << "DBG recoveryDir=" 
+                      << mqt::gui::MainWindowTestAccess::recoveryDirOf(w2).toStdString()
+                      << " dirty=" << mqt::gui::MainWindowTestAccess::isSessionDirtyAt(w2, idx)
+                      << "\n";
+        }
+        require(!mqt::gui::MainWindowTestAccess::recoverySnapshots(w2).isEmpty(),
+            "dirty document must produce a recovery snapshot");
+
+        // 保存后快照清除
+        require(mqt::gui::MainWindowTestAccess::save(w2, path),
+            "save must succeed");
+        QDir recDir(mqt::gui::MainWindowTestAccess::recoveryDirOf(w2));
+        qDebug() << "DBG after save dir:" << recDir.entryList(QDir::Files);
+        require(mqt::gui::MainWindowTestAccess::recoverySnapshots(w2).isEmpty(),
+            "save must clear the recovery snapshot");
+
+        // M17：持久化会话状态（直接调用，不依赖 close 事件语义）
+        mqt::gui::MainWindowTestAccess::saveSessionState(w2);
+    }
+
+    // 新窗口恢复标签
+    mqt::gui::MainWindow w3;
+    mqt::gui::MainWindowTestAccess::disableUpdateChecks(w3);
+    QApplication::processEvents(QEventLoop::AllEvents, 100);
+    require(mqt::gui::MainWindowTestAccess::sessionCount(w3) >= 1,
+        "restored window must reopen persisted tabs");
+    const int idx = mqt::gui::MainWindowTestAccess::sessionIndexForPath(w3, path);
+    require(idx >= 0, "persisted tab must be restored");
+    require(mqt::gui::MainWindowTestAccess::sessionEditorContent(w3, idx) ==
+            "PERSIST CONTENT dirty tail",
+        "restored tab content must match");
+}
+
 void testStaleIndexCannotReplaceNormalPreview(
     mqt::gui::MainWindow& window, const std::filesystem::path& root)
 {
@@ -630,6 +719,7 @@ int main(int argc, char** argv)
         mqt::gui::MainWindow window;
         mqt::gui::MainWindowTestAccess::disableUpdateChecks(window);
         testUnchangedWindowSavePreservesBytes(window, root);
+        testSessionPersistenceAndRecovery(window, root);
         testCommandMatrixAndRecents(window, root);
         testStaleIndexCannotReplaceNormalPreview(window, root);
         testTabsDedupSwitchAndClose(window, root);

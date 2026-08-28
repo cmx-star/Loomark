@@ -24,6 +24,7 @@
 #include <QDesktopServices>
 #include <QDockWidget>
 #include <QFileSystemModel>
+#include <QFileSystemWatcher>
 #include <QTreeView>
 #include <QFileDialog>
 #include <QFrame>
@@ -47,6 +48,7 @@
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QStandardPaths>
 #include <QTabBar>
 #include <QTextBrowser>
 #include <QTextBlock>
@@ -575,6 +577,20 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
     });
     addAction(findToggleAction_);
 
+    fileWatcher_ = new QFileSystemWatcher(this);
+    connect(fileWatcher_, &QFileSystemWatcher::fileChanged,
+        this, &MainWindow::onSessionFileChanged);
+    recoveryTimer_ = new QTimer(this);
+    recoveryTimer_->setSingleShot(true);
+    recoveryTimer_->setInterval(2000);
+    connect(recoveryTimer_, &QTimer::timeout, this, [this] {
+        if (recoveryPendingSession_ != nullptr &&
+            recoveryPendingSession_->isDirty()) {
+            writeRecoverySnapshot(recoveryPendingSession_);
+        }
+        recoveryPendingSession_ = nullptr;
+    });
+
     setupWorkspacePanel();
     registerCommands();
     {
@@ -593,6 +609,12 @@ MainWindow::MainWindow(const std::filesystem::path& initialPath, QWidget* parent
     status->showMessage(QStringLiteral("就绪"));
     if (!initialPath.empty()) {
         loadDocument(initialPath);
+        sessionRestored_ = true;
+    } else {
+        QTimer::singleShot(0, this, [this] {
+            restoreSessionState();
+            sessionRestored_ = true;
+        });
     }
     QTimer::singleShot(1600, this, [this] {
         checkForUpdates(false);
@@ -772,29 +794,34 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
             // Normal tier: a fresh session owns the editor + backend. Files
             // above the threshold stream in through the background chunked
             // loader; the UI stays responsive meanwhile.
-            activeSession_ = new DocumentSession(++documentGeneration_, this);
-            sessions_.append(activeSession_);
-            editorStack_->addWidget(&activeSession_->editor());
-            tabBar_->addTab(tabTextForSession(activeSession_));
+            auto* session = new DocumentSession(++documentGeneration_, this);
+            activeSession_ = session;
+            sessions_.append(session);
+            editorStack_->addWidget(&session->editor());
+            tabBar_->addTab(tabTextForSession(session));
             tabBar_->setVisible(!largeMode_);
-            connect(activeSession_, &DocumentSession::loadProgress,
-                this, [this](std::uint64_t loaded, std::uint64_t total) {
+            connect(session, &DocumentSession::loadProgress, session,
+                [this, session](std::uint64_t loaded, std::uint64_t total) {
+                    if (session != activeSession_) {
+                        return;
+                    }
                     const int percent = total == 0
                         ? 100
                         : static_cast<int>((loaded * 100) / total);
                     statusBar()->showMessage(
                         QStringLiteral("装载中 %1%").arg(percent));
                 });
-            connect(activeSession_, &DocumentSession::undoBudgetExceeded,
-                this, [this] {
+            connect(session, &DocumentSession::undoBudgetExceeded, session,
+                [this, session] {
+                    if (session != activeSession_) {
+                        return;
+                    }
                     statusBar()->showMessage(
                         QStringLiteral("撤销历史已达内存预算，已清空撤销记录"), 4000);
                 });
-            connect(activeSession_, &DocumentSession::contentsChanged, this, [this] {
-                auto* session = qobject_cast<DocumentSession*>(sender());
-                if (session != nullptr) {
-                    updateTabForSession(session);
-                }
+            connect(session, &DocumentSession::contentsChanged, session, [this, session] {
+                updateTabForSession(session);
+                scheduleRecoverySnapshot(session);
                 if (session == activeSession_) {
                     dirty_ = true;
                     updateWindowState();
@@ -804,13 +831,13 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
                     }
                 }
             });
-            connect(activeSession_, &DocumentSession::loadFinished,
-                this, [this](bool ok, const QString& error) {
+            connect(session, &DocumentSession::loadFinished, session,
+                [this, session](bool ok, const QString& error) {
                     Q_UNUSED(error);
-                    if (sender() != activeSession_) {
+                    backgroundLoadPending_ = session->isLoadInProgress();
+                    if (session != activeSession_) {
                         return; // 用户已切走；装载结果归各自会话
                     }
-                    backgroundLoadPending_ = false;
                     if (!ok) {
                         dirty_ = false;
                         updateWindowState();
@@ -826,14 +853,12 @@ bool MainWindow::loadDocument(const std::filesystem::path& path)
                 });
             if (info.sizeBytes > kBackgroundLoadThreshold) {
                 backgroundLoadPending_ = true;
-                qInfo() << "LD5 openBackground";
-            activeSession_->openBackground(path);
+                session->openBackground(path);
             } else {
-                activeSession_->openSync(path);
+                session->openSync(path);
             }
             windowStart_ = 0;
             windowEnd_ = info.sizeBytes;
-        qInfo() << "LD6 windowed";
         } else if (!readWindow(0)) {
             QMessageBox::critical(this, QStringLiteral("打开失败"), QStringLiteral("无法读取文件内容。"));
             return false;
@@ -1045,6 +1070,7 @@ bool MainWindow::writeCurrentDocument(const std::filesystem::path& path)
             info.newlineStyleKnown = currentInfo_.newlineStyleKnown;
             setCurrentPath(path, info);
             dirty_ = false;
+            clearRecoverySnapshot(path);
             updateTabForSession(activeSession_);
             updateWindowState();
             updateStatusBar();
@@ -1294,6 +1320,173 @@ void MainWindow::setupWorkspacePanel()
             loadDocument(toPath(workspaceModel_->filePath(index)));
         }
     });
+}
+
+void MainWindow::saveSessionState()
+{
+    QSettings settings;
+    QStringList paths;
+    QList<QPair<QString, int>> cursors;
+    int activeIndex = -1;
+    for (auto* session : sessions_) {
+        if (!session->hasBackend() || session->path().empty()) {
+            continue;
+        }
+        std::error_code ec;
+        if (!std::filesystem::exists(session->path(), ec) || ec) {
+            continue;
+        }
+        paths.append(toQString(session->path()));
+        cursors.append({toQString(session->path()),
+            static_cast<int>(session->editor().send(SCI_GETCURRENTPOS))});
+        if (session == activeSession_) {
+            activeIndex = paths.size() - 1;
+        }
+    }
+    settings.setValue(QStringLiteral("session/paths"), paths);
+    settings.setValue(QStringLiteral("session/activeIndex"), activeIndex);
+    QVariantList cursorList;
+    for (const auto& [p, pos] : cursors) {
+        cursorList.append(QStringList{p, QString::number(pos)});
+    }
+    settings.setValue(QStringLiteral("session/cursors"), cursorList);
+    fprintf(stderr, "DBG saveSession paths=%d active=%d\n", paths.size(), activeIndex);
+}
+
+void MainWindow::restoreSessionState()
+{
+    QSettings settings;
+    const QStringList paths =
+        settings.value(QStringLiteral("session/paths")).toStringList();
+    fprintf(stderr, "DBG restore paths=%d\n", paths.size());
+    if (paths.isEmpty()) {
+        return;
+    }
+    const int activeIndex =
+        settings.value(QStringLiteral("session/activeIndex"), -1).toInt();
+    QVariantList cursorList =
+        settings.value(QStringLiteral("session/cursors")).toList();
+    int restored = 0;
+    int activeRestored = -1;
+    for (const QString& entry : paths) {
+        const std::filesystem::path path = toPath(entry);
+        std::error_code ec;
+        if (!std::filesystem::exists(path, ec) || ec) {
+            continue; // 缺失文件静默跳过（会话状态不是必须恢复项）
+        }
+        const auto info = mqt::core::statFile(path);
+        if (info.tier != mqt::core::FileTier::Normal) {
+            continue; // 大档位不自动恢复（需要确认对话框）
+        }
+        if (!loadDocument(path)) {
+            continue;
+        }
+        if (activeSession_ != nullptr) {
+            for (const QVariant& pair : cursorList) {
+                const QStringList kv = pair.toStringList();
+                if (kv.size() == 2 && kv.front() == entry) {
+                    activeSession_->editor().send(SCI_GOTOPOS,
+                        static_cast<uptr_t>(kv.back().toInt()));
+                    break;
+                }
+            }
+        }
+        ++restored;
+        if (restored == activeIndex + 1) {
+            activeRestored = restored;
+        }
+    }
+    if (restored > 0) {
+        statusBar()->showMessage(
+            QStringLiteral("已恢复 %1 个标签页").arg(restored), 3000);
+    }
+    // M18: 启动时检测残留恢复快照（上次异常退出/放弃的未保存编辑）
+    const QDir recDir(recoveryDir());
+    const auto leftovers = recDir.entryList(QStringList{"session-*.md"}, QDir::Files);
+    if (!leftovers.isEmpty()) {
+        statusBar()->showMessage(
+            QStringLiteral("检测到 %1 个未保存编辑快照，可在 %2 中找回")
+                .arg(leftovers.size()).arg(recoveryDir()), 10000);
+    }
+    Q_UNUSED(activeRestored);
+}
+
+QString MainWindow::recoveryDir() const
+{
+    const QString base = QStandardPaths::writableLocation(
+        QStandardPaths::AppDataLocation);
+    return base + QStringLiteral("/recovery");
+}
+
+QString recoveryFileFor(const std::filesystem::path& path)
+{
+    // 路径哈希（FNV-1a）作为快照文件名，避免文件名非法字符问题
+    std::uint64_t h = 0xCBF29CE484222325ULL;
+    for (char c : path.string()) {
+        h ^= static_cast<unsigned char>(c);
+        h *= 0x100000001B3ULL;
+    }
+    return QStringLiteral("session-%1.md").arg(static_cast<qulonglong>(h), 16, 16, QLatin1Char('0'));
+}
+
+void MainWindow::scheduleRecoverySnapshot(DocumentSession* session)
+{
+    recoveryPendingSession_ = session;
+    recoveryTimer_->start();
+}
+
+void MainWindow::writeRecoverySnapshot(DocumentSession* session)
+{
+    const auto length = static_cast<std::uint64_t>(
+        session->editor().send(SCI_GETTEXTLENGTH));
+    if (length > 8ULL * mqt::core::kMiB) {
+        return; // 超大文档不做快照（记录于状态栏策略在 M18 完整版补齐）
+    }
+    const QDir dir(recoveryDir());
+    if (!dir.exists() && !QDir().mkpath(recoveryDir())) {
+        return;
+    }
+    const QString file = dir.filePath(recoveryFileFor(session->path()));
+    std::string content;
+    content.resize(static_cast<std::size_t>(length) + 1);
+    session->editor().send(SCI_GETTEXT, static_cast<sptr_t>(length) + 1,
+        reinterpret_cast<sptr_t>(content.data()));
+    content.resize(static_cast<std::size_t>(length));
+    QFile out(file);
+    if (out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        out.write(content.data(), static_cast<qint64>(content.size()));
+        out.close();
+    }
+}
+
+void MainWindow::clearRecoverySnapshot(const std::filesystem::path& path)
+{
+    QFile::remove(QDir(recoveryDir()).filePath(recoveryFileFor(path)));
+}
+
+void MainWindow::watchSession(DocumentSession* session)
+{
+    if (fileWatcher_ == nullptr || session->path().empty()) {
+        return;
+    }
+    const QString watched = toQString(session->path());
+    if (!fileWatcher_->addPath(watched)) {
+        // 网络盘等不可监视路径：静默回退（保存前的指纹复核仍在）
+        return;
+    }
+}
+
+void MainWindow::onSessionFileChanged(const QString& path)
+{
+    const std::filesystem::path changed = toPath(path);
+    for (auto* session : sessions_) {
+        if (session->path() == changed) {
+            statusBar()->showMessage(
+                QStringLiteral("文件已在磁盘上被外部修改：%1").arg(path), 6000);
+            return;
+        }
+    }
+    fileWatcher_->removePath(path);
 }
 
 void MainWindow::registerCommands()

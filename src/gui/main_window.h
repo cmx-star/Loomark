@@ -23,6 +23,7 @@ class QTabBar;
 class QDockWidget;
 class QFileSystemModel;
 class QTreeView;
+class QFileSystemWatcher;
 class ScintillaEditBase;
 
 namespace mqt::gui {
@@ -65,6 +66,15 @@ private:
     // M15/M16：最近文件、工作区与命令系统
     void updateRecentFiles(const std::filesystem::path& path);
     void rebuildRecentMenu();
+    // M17/M18/M19
+    void saveSessionState();
+    void restoreSessionState();
+    void scheduleRecoverySnapshot(mqt::gui::DocumentSession* session);
+    void writeRecoverySnapshot(mqt::gui::DocumentSession* session);
+    void clearRecoverySnapshot(const std::filesystem::path& path);
+    [[nodiscard]] QString recoveryDir() const;
+    void watchSession(mqt::gui::DocumentSession* session);
+    void onSessionFileChanged(const QString& path);
     void openWorkspaceDirectory();
     void setupWorkspacePanel();
     void registerCommands();
@@ -170,6 +180,10 @@ private:
     QFileSystemModel* workspaceModel_ = nullptr;
     QTreeView* workspaceTree_ = nullptr;
     QList<QPair<QAction*, std::function<bool()>>> commands_;
+    QFileSystemWatcher* fileWatcher_ = nullptr;
+    QTimer* recoveryTimer_ = nullptr;
+    mqt::gui::DocumentSession* recoveryPendingSession_ = nullptr;
+    bool sessionRestored_ = false;
 
     QAction* openAction_ = nullptr;
     QAction* checkUpdatesAction_ = nullptr;
