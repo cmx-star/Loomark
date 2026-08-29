@@ -120,7 +120,6 @@ void testTierGating()
     const std::uint64_t offsetA = content.find("para a");
     const std::uint64_t offsetB = content.find("para b");
     const std::uint64_t offsetC = content.find("para c");
-    const std::uint64_t offsetEnd = content.size() - 1;
 
     const std::uint64_t cursorInSection2 = content.find("# Section 2");
     const std::uint64_t cursorInSection1 = content.find("# Section 1");

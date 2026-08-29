@@ -64,7 +64,7 @@ public:
     /// Sparse line index and streaming fingerprint of the loaded content
     /// (populated after a completed load; empty/0 before).
     [[nodiscard]] const mqt::core::SparseLineIndex& lineIndex() const { return lineIndex_; }
-    [[nodiscard]] std::uint64_t fingerprint() const { return fingerprint_; }
+    [[nodiscard]] std::uint64_t fingerprint() const override { return fingerprint_; }
 
     // ---- M12: save point, undo budget, external fingerprint check ----
 
@@ -76,7 +76,7 @@ public:
     /// undoBudgetExceeded(); the on-disk save point is unaffected.
     void setUndoBudgetBytes(std::uint64_t bytes) { undoBudgetBytes_ = bytes; }
     [[nodiscard]] std::uint64_t undoBudgetBytes() const { return undoBudgetBytes_; }
-    [[nodiscard]] bool canUndo() const { return editor_.send(SCI_CANUNDO) != 0; }
+    [[nodiscard]] bool canUndo() const override { return editor_.send(SCI_CANUNDO) != 0; }
 
     // ---- M11: batched search & confirmed bulk replace ----
 
