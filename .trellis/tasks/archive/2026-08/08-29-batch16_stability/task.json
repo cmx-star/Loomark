@@ -3,7 +3,7 @@
   "name": "batch16_stability",
   "title": "批次16 桌面稳定性与发布",
   "description": "M68 性能门禁记录；M69 崩溃恢复与安全模式；M70 升级迁移；M71 三平台（CI）；M72 可访问性。F14。",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "cmx",
   "assignee": "cmx",
   "createdAt": "2026-08-29",
-  "completedAt": null,
+  "completedAt": "2026-08-29",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -22,5 +22,7 @@
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "status": "completed"
+  }
 }
