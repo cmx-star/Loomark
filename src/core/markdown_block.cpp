@@ -155,9 +155,7 @@ void MarkdownBlockIndex::build(std::string_view content, std::uint64_t documentV
         block.level = level;
         block.headingPath = path;
         block.hash = blockHash(text);
-        if (kind == BlockKind::Heading || kind == BlockKind::ListItem) {
-            block.payload = std::string(text.substr(0, std::min<std::size_t>(text.size(), 120)));
-        }
+        block.payload = std::string(text.substr(0, std::min<std::size_t>(text.size(), 120)));
         blocks_.push_back(std::move(block));
     };
 
