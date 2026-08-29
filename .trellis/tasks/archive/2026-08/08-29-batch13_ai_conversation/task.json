@@ -3,7 +3,7 @@
   "name": "batch13_ai_conversation",
   "title": "批次13 AI 对话与上下文",
   "description": "M53 Provider 抽象（OpenAI 兼容+SSE）；M54 对话会话；M55 上下文装箱；M56 分层摘要；M57 密钥与隐私。F11 核心层。",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "cmx",
   "assignee": "cmx",
   "createdAt": "2026-08-29",
-  "completedAt": null,
+  "completedAt": "2026-08-29",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -22,5 +22,7 @@
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "status": "completed"
+  }
 }
