@@ -353,6 +353,7 @@ add_library(markdown_qt_core
     src/core/load_scanner.cpp
     src/core/markdown_block.cpp
     src/core/markdown_index.cpp
+    src/core/view_sync.cpp
     src/core/virtual_preview.cpp
 )
 
@@ -599,6 +600,19 @@ target_compile_options(markdown_qt_virtual_preview_tests
         $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
 )
 add_test(NAME markdown_qt_virtual_preview_tests COMMAND markdown_qt_virtual_preview_tests)
+
+add_executable(markdown_qt_view_sync_tests
+    tests/view_sync_tests.cpp
+)
+target_link_libraries(markdown_qt_view_sync_tests
+    PRIVATE
+        markdown_qt_core
+)
+target_compile_options(markdown_qt_view_sync_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_view_sync_tests COMMAND markdown_qt_view_sync_tests)
 
 add_executable(markdown_qt_window_boundary_tests
     src/gui/window_boundary.cpp
