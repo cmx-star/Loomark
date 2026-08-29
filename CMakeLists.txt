@@ -671,6 +671,26 @@ target_compile_options(markdown_qt_batch12_tests
 )
 add_test(NAME markdown_qt_batch12_tests COMMAND markdown_qt_batch12_tests)
 
+add_executable(markdown_qt_ai_tests
+    tests/ai_tests.cpp
+    src/ai/ai_provider.cpp
+    src/ai/chat_session.cpp
+)
+target_link_libraries(markdown_qt_ai_tests
+    PRIVATE
+        Qt6::Network
+        Qt6::Core
+)
+target_include_directories(markdown_qt_ai_tests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_options(markdown_qt_ai_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_ai_tests COMMAND markdown_qt_ai_tests)
+
 add_executable(markdown_qt_window_boundary_tests
     src/gui/window_boundary.cpp
     tests/window_boundary_tests.cpp
