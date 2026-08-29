@@ -262,3 +262,8 @@ Provider 抽象/会话/装箱/摘要。ctest 18/18。
 ## Session 19: 批次 14 AI 修改闭环完成（F12 核心层，61/87）
 
 EditProposal/校验/确认应用/影响 Diff。ctest 19/19。契约扩展 undo/redo/fingerprint。
+
+
+## Session 20: 批次 15 RAG 与 Agent 完成（F13 核心层，67/87）
+
+语义分块/队列/元数据/检索/记忆/只读 Agent。ctest 20/20。
