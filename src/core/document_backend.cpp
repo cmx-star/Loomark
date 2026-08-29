@@ -1,5 +1,7 @@
 #include "core/document_backend.h"
 
+#include "core/markdown_block.h"
+
 #include <algorithm>
 #include <deque>
 #include <fstream>
@@ -233,8 +235,12 @@ ApplyResult FileDocumentBackend::apply(std::vector<TextEdit> edits,
         newBuffer.append(buffer_.data() + cursor, static_cast<std::size_t>(buffer_.size() - cursor));
     }
 
+    previousBuffer_ = buffer_;
+    canUndoFlag_ = true;
+
     buffer_ = std::move(newBuffer);
     info_.sizeBytes = buffer_.size();
+    fingerprint_ = blockHash(buffer_);
     ++version_;
     return {ApplyError::None, version_};
 }
@@ -290,6 +296,41 @@ void FileDocumentBackend::loadFromFile()
     info_.hasUtf8Bom = bomOffset_ > 0;
     info_.newlineStyle = NewlineStyle::None;
     info_.newlineStyleKnown = false;
+    fingerprint_ = blockHash(buffer_);
+    canUndoFlag_ = false;
+}
+
+bool FileDocumentBackend::undo()
+{
+    if (!canUndoFlag_) {
+        return false;
+    }
+    redoBuffer_ = buffer_;
+    buffer_ = previousBuffer_;
+    info_.sizeBytes = buffer_.size();
+    fingerprint_ = blockHash(buffer_);
+    canUndoFlag_ = false;
+    ++version_;
+    return true;
+}
+
+bool FileDocumentBackend::redo()
+{
+    if (redoBuffer_.empty()) {
+        return false;
+    }
+    buffer_ = redoBuffer_;
+    redoBuffer_.clear();
+    info_.sizeBytes = buffer_.size();
+    fingerprint_ = blockHash(buffer_);
+    canUndoFlag_ = true;
+    ++version_;
+    return true;
+}
+
+bool FileDocumentBackend::canUndo() const
+{
+    return canUndoFlag_;
 }
 
 void FileDocumentBackend::saveToFile()

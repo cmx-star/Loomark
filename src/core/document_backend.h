@@ -62,6 +62,12 @@ class IDocumentBackend {
 public:
     virtual ~IDocumentBackend() = default;
 
+    /// M12/M14：撤销/重做与内容指纹（后端能力可能不同，默认不可撤销）。
+    virtual bool undo() { return false; }
+    virtual bool redo() { return false; }
+    [[nodiscard]] virtual bool canUndo() const { return false; }
+    [[nodiscard]] virtual std::uint64_t fingerprint() const { return 0; }
+
     virtual DocumentSnapshot snapshot() const = 0;
     virtual DocumentInfo info() const = 0;
     virtual std::string read(ByteRange range) const = 0;
@@ -95,12 +101,21 @@ public:
     void saveAs(const std::filesystem::path& path) override;
     DocumentSnapshot reload() override;
 
+    bool undo() override;
+    bool redo() override;
+    [[nodiscard]] bool canUndo() const override;
+    [[nodiscard]] std::uint64_t fingerprint() const override { return fingerprint_; }
+
 private:
     void loadFromFile();
     void saveToFile();
 
     std::filesystem::path path_;
     std::string buffer_;
+    std::string previousBuffer_;
+    std::string redoBuffer_;
+    std::uint64_t fingerprint_ = 0;
+    bool canUndoFlag_ = false;
     std::uint64_t bomOffset_ = 0;
     DocumentInfo info_{};
     DocumentVersion version_ = kInitialDocumentVersion;
