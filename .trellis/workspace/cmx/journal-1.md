@@ -287,3 +287,15 @@ EditProposal/校验/确认应用/影响 Diff。ctest 19/19。契约扩展 undo/r
 ## Session 25: 批次 19 移动 AI 与发布清单完成（F17 核心层，87/87 — 全部模块实现完毕）
 
 任务恢复/预算/发布清单。ctest 24/24。
+
+
+## Session 26: 收官——19 批次 / 87 模块全部实现
+
+**Date**: 2026-08-29 | **Branch**: feat/large-file-windowed-gui
+
+### Final Gate
+
+- clean 构建 0 错误 0 警告（上游 Scintilla 1 处 deprecation 除外）
+- ctest 24/24（含块模型/虚拟预览/同步Diff/块编辑/Git/导出/AI/RAG/插件/移动/会话/恢复）
+- 打包产物 Loomark.app 冒烟正常
+- 按用户口径：全部功能实现完毕，发布与深度测试为下一阶段
