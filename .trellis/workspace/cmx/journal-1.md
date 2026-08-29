@@ -257,3 +257,8 @@ DOCX（内置 ZIP/OOXML）/预设/外部编译器门控。ctest 17/17。
 ## Session 18: 批次 13 AI 层完成（F11 核心层，57/87）
 
 Provider 抽象/会话/装箱/摘要。ctest 18/18。
+
+
+## Session 19: 批次 14 AI 修改闭环完成（F12 核心层，61/87）
+
+EditProposal/校验/确认应用/影响 Diff。ctest 19/19。契约扩展 undo/redo/fingerprint。
