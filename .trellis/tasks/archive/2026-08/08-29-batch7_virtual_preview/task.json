@@ -3,7 +3,7 @@
   "name": "batch7_virtual_preview",
   "title": "批次7 虚拟预览与目录定位",
   "description": "M25 虚拟预览模型；M26 大块二次虚拟化；M27 目录模型；M28 预览↔源码定位。F05 阅读器核心层。",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "cmx",
   "assignee": "cmx",
   "createdAt": "2026-08-29",
-  "completedAt": null,
+  "completedAt": "2026-08-29",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -22,5 +22,7 @@
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "status": "completed"
+  }
 }
