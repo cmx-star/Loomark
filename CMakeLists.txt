@@ -354,6 +354,7 @@ add_library(markdown_qt_core
     src/core/markdown_block.cpp
     src/core/markdown_index.cpp
     src/core/block_edit.cpp
+    src/core/export.cpp
     src/core/git_service.cpp
     src/core/view_sync.cpp
     src/core/virtual_preview.cpp
@@ -641,6 +642,19 @@ target_compile_options(markdown_qt_git_service_tests
         $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
 )
 add_test(NAME markdown_qt_git_service_tests COMMAND markdown_qt_git_service_tests)
+
+add_executable(markdown_qt_export_tests
+    tests/export_tests.cpp
+)
+target_link_libraries(markdown_qt_export_tests
+    PRIVATE
+        markdown_qt_core
+)
+target_compile_options(markdown_qt_export_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_export_tests COMMAND markdown_qt_export_tests)
 
 add_executable(markdown_qt_window_boundary_tests
     src/gui/window_boundary.cpp
