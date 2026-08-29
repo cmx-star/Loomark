@@ -351,6 +351,7 @@ add_library(markdown_qt_core
     src/core/document_file.cpp
     src/core/file_tier.cpp
     src/core/load_scanner.cpp
+    src/core/markdown_block.cpp
     src/core/markdown_index.cpp
 )
 
@@ -571,6 +572,19 @@ target_compile_options(markdown_qt_load_scanner_tests
         $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
 )
 add_test(NAME markdown_qt_load_scanner_tests COMMAND markdown_qt_load_scanner_tests)
+
+add_executable(markdown_qt_block_model_tests
+    tests/markdown_block_tests.cpp
+)
+target_link_libraries(markdown_qt_block_model_tests
+    PRIVATE
+        markdown_qt_core
+)
+target_compile_options(markdown_qt_block_model_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_block_model_tests COMMAND markdown_qt_block_model_tests)
 
 add_executable(markdown_qt_window_boundary_tests
     src/gui/window_boundary.cpp
