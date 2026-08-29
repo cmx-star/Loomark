@@ -252,3 +252,8 @@ Front Matter/清单/流式导出/安全 HTML。ctest 16/16。
 ## Session 17: 批次 12 Export Center 核心完成（F10 核心层，52/87）
 
 DOCX（内置 ZIP/OOXML）/预设/外部编译器门控。ctest 17/17。
+
+
+## Session 18: 批次 13 AI 层完成（F11 核心层，57/87）
+
+Provider 抽象/会话/装箱/摘要。ctest 18/18。
