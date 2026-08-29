@@ -3,7 +3,7 @@
   "name": "batch14_edit_proposal",
   "title": "批次14 AI 修改闭环",
   "description": "M58 EditProposal；M59 Diff 确认；M60 版本冲突重算；M61 应用与撤销。F12 核心层。",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "cmx",
   "assignee": "cmx",
   "createdAt": "2026-08-29",
-  "completedAt": null,
+  "completedAt": "2026-08-29",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -22,5 +22,7 @@
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "status": "completed"
+  }
 }
