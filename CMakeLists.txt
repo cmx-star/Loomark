@@ -729,6 +729,20 @@ target_compile_options(markdown_qt_rag_tests
 )
 add_test(NAME markdown_qt_rag_tests COMMAND markdown_qt_rag_tests)
 
+add_executable(markdown_qt_app_state_tests
+    tests/app_state_tests.cpp
+    src/core/app_state.cpp
+)
+target_link_libraries(markdown_qt_app_state_tests
+    PRIVATE
+        markdown_qt_core
+)
+target_compile_options(markdown_qt_app_state_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_app_state_tests COMMAND markdown_qt_app_state_tests)
+
 add_executable(markdown_qt_window_boundary_tests
     src/gui/window_boundary.cpp
     tests/window_boundary_tests.cpp
