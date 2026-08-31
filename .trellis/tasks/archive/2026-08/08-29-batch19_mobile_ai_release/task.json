@@ -1,0 +1,28 @@
+{
+  "id": "batch19_mobile_ai_release",
+  "name": "batch19_mobile_ai_release",
+  "title": "批次19 移动 AI 与发布",
+  "description": "M83 移动 AI；M84 移动导出；M85 前后台任务恢复；M86 资源门禁；M87 发布清单。F17 核心层。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "cmx",
+  "assignee": "cmx",
+  "createdAt": "2026-08-29",
+  "completedAt": "2026-08-29",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "status": "completed"
+  }
+}

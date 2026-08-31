@@ -19,6 +19,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#else
+#include <sys/statvfs.h>
 #endif
 
 namespace mqt::core {
@@ -153,7 +155,7 @@ std::string_view toString(NewlineStyle style)
     return "unknown";
 }
 
-FileInfo inspectFile(const std::filesystem::path& path)
+FileInfo statFile(const std::filesystem::path& path)
 {
     std::error_code ec;
     const auto size = std::filesystem::file_size(path, ec);
@@ -170,25 +172,29 @@ FileInfo inspectFile(const std::filesystem::path& path)
     info.path = path;
     info.sizeBytes = size;
     info.tier = classifyDesktopFile(size);
+    info.hasUtf8Bom = hasUtf8Bom(input);
+    info.newlineStyleKnown = false;
+    return info;
+}
+
+FileInfo inspectFile(const std::filesystem::path& path, const std::atomic_bool* cancelFlag)
+{
+    FileInfo info = statFile(path);
+
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        throw std::runtime_error("failed to open file: " + path.string());
+    }
 
     std::array<char, 64 * 1024> buffer {};
-    bool firstChunk = true;
     bool previousWasCr = false;
     NewlineCounts counts;
 
-    while (input) {
+    while (input && !(cancelFlag != nullptr && cancelFlag->load(std::memory_order_relaxed))) {
         input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
         const auto read = input.gcount();
         if (read <= 0) {
             break;
-        }
-
-        if (firstChunk) {
-            firstChunk = false;
-            info.hasUtf8Bom = read >= 3 &&
-                static_cast<unsigned char>(buffer[0]) == 0xEF &&
-                static_cast<unsigned char>(buffer[1]) == 0xBB &&
-                static_cast<unsigned char>(buffer[2]) == 0xBF;
         }
 
         for (std::streamsize i = 0; i < read; ++i) {
@@ -210,10 +216,14 @@ FileInfo inspectFile(const std::filesystem::path& path)
         }
     }
 
+    if (cancelFlag != nullptr && cancelFlag->load(std::memory_order_relaxed)) {
+        return info; // cancelled: newline style stays undetermined
+    }
     if (previousWasCr) {
         ++counts.cr;
     }
     info.newlineStyle = classifyNewlines(counts);
+    info.newlineStyleKnown = true;
     return info;
 }
 
@@ -378,32 +388,100 @@ LocateResult locateByteRange(const std::filesystem::path& path, ByteRange range)
     return result;
 }
 
-void writeFileAtomically(const std::filesystem::path& path, std::string_view content)
+AtomicFileWriter::AtomicFileWriter(const std::filesystem::path& path)
+    : targetPath_(path)
 {
     const auto directory = path.parent_path().empty() ? std::filesystem::current_path() : path.parent_path();
     std::filesystem::create_directories(directory);
-    const auto tempPath = makeTempPath(path);
+    tempPath_ = makeTempPath(path);
+    output_.open(tempPath_, std::ios::binary | std::ios::trunc);
+    if (!output_) {
+        throw std::runtime_error("failed to create temp file: " + tempPath_.string());
+    }
+}
 
-    {
-        std::ofstream output(tempPath, std::ios::binary | std::ios::trunc);
-        if (!output) {
-            throw std::runtime_error("failed to create temp file: " + tempPath.string());
-        }
-        output.write(content.data(), static_cast<std::streamsize>(content.size()));
-        output.flush();
-        if (!output) {
-            std::filesystem::remove(tempPath);
-            throw std::runtime_error("failed to write temp file: " + tempPath.string());
-        }
+AtomicFileWriter::~AtomicFileWriter()
+{
+    if (committed_) {
+        return;
+    }
+    output_.close();
+    std::error_code ec;
+    std::filesystem::remove(tempPath_, ec);
+}
+
+void AtomicFileWriter::write(std::string_view chunk)
+{
+    if (chunk.empty()) {
+        return;
+    }
+    if (chunk.size() > std::numeric_limits<std::uint64_t>::max() - bytesWritten_) {
+        throw std::length_error("atomic file payload exceeds supported size");
+    }
+    if (chunk.size() > static_cast<std::size_t>(std::numeric_limits<std::streamsize>::max())) {
+        throw std::length_error("atomic file chunk exceeds stream size");
+    }
+    output_.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+    if (!output_) {
+        throw std::runtime_error("failed to write temp file: " + tempPath_.string());
+    }
+    bytesWritten_ += static_cast<std::uint64_t>(chunk.size());
+}
+
+void AtomicFileWriter::commit()
+{
+    output_.flush();
+    if (!output_) {
+        throw std::runtime_error("failed to write temp file: " + tempPath_.string());
+    }
+    output_.close();
+    if (!output_) {
+        throw std::runtime_error("failed to close temp file: " + tempPath_.string());
+    }
+
+    std::error_code sizeError;
+    const auto writtenSize = std::filesystem::file_size(tempPath_, sizeError);
+    if (sizeError || writtenSize != bytesWritten_) {
+        throw std::runtime_error("temp file length verification failed: " + tempPath_.string());
     }
 
     try {
-        replaceFileAtomically(tempPath, path);
+        replaceFileAtomically(tempPath_, targetPath_);
     } catch (...) {
         std::error_code ec;
-        std::filesystem::remove(tempPath, ec);
+        std::filesystem::remove(tempPath_, ec);
         throw;
     }
+    committed_ = true;
+}
+
+void writeFileAtomically(const std::filesystem::path& path, std::string_view content)
+{
+    AtomicFileWriter writer(path);
+    writer.write(content);
+    writer.commit();
+}
+
+std::uint64_t availableDiskBytes(const std::filesystem::path& path)
+{
+    auto directory = path.parent_path();
+    if (directory.empty()) {
+        directory = std::filesystem::current_path();
+    }
+#ifdef _WIN32
+    const auto wide = directory.wstring();
+    ULARGE_INTEGER freeBytes {};
+    if (!GetDiskFreeSpaceExW(wide.c_str(), &freeBytes, nullptr, nullptr)) {
+        throw std::runtime_error("failed to query free disk space for: " + directory.string());
+    }
+    return static_cast<std::uint64_t>(freeBytes.QuadPart);
+#else
+    struct statvfs stats {};
+    if (statvfs(directory.c_str(), &stats) != 0) {
+        throw std::runtime_error("failed to query free disk space for: " + directory.string());
+    }
+    return static_cast<std::uint64_t>(stats.f_bavail) * static_cast<std::uint64_t>(stats.f_frsize);
+#endif
 }
 
 } // namespace mqt::core

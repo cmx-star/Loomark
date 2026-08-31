@@ -1,0 +1,28 @@
+{
+  "id": "m18_recovery_journal",
+  "name": "m18_recovery_journal",
+  "title": "M18 恢复日志",
+  "description": "批次5 M18：脏文档编辑快照（≤8MB）落盘、保存后清除、启动时检测残留快照并提示。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "cmx",
+  "assignee": "cmx",
+  "createdAt": "2026-08-29",
+  "completedAt": "2026-08-29",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "status": "completed"
+  }
+}

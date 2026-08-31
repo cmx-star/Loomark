@@ -4,16 +4,43 @@
 
 #include <QMainWindow>
 
+#include <atomic>
 #include <filesystem>
+#include <functional>
+#include <QPair>
 
 class QAction;
+class QCheckBox;
 class QLabel;
+class QLineEdit;
+class QMenu;
 class QPlainTextEdit;
 class QTextBrowser;
 class QTimer;
+class QToolBar;
+class QStackedWidget;
+class QTabBar;
+class QDockWidget;
+class QFileSystemModel;
+class QTreeView;
+class QFileSystemWatcher;
+class ScintillaEditBase;
+
+namespace mqt::gui {
+class DocumentSession;
+}
+
+namespace mqt::backend {
+class ScintillaDocumentBackend;
+}
 
 namespace mqt::gui {
 
+class PreviewIndexThread;
+class FileInspectThread;
+#ifdef MQT_BUILD_TESTS
+class MainWindowTestAccess;
+#endif
 class UpdateChecker;
 
 class MainWindow final : public QMainWindow {
@@ -25,10 +52,42 @@ protected:
     void resizeEvent(QResizeEvent* event) override;
 
 private:
+#ifdef MQT_BUILD_TESTS
+    friend class MainWindowTestAccess;
+#endif
+
     void openDocument();
     void saveDocument();
     void saveDocumentAs();
     void reloadDocument();
+    void toggleFindBar();
+    void findNext();
+    void replaceAll();
+    // M15/M16：最近文件、工作区与命令系统
+    void updateRecentFiles(const std::filesystem::path& path);
+    void rebuildRecentMenu();
+    // M17/M18/M19
+    void saveSessionState();
+    void restoreSessionState();
+    void scheduleRecoverySnapshot(mqt::gui::DocumentSession* session);
+    void writeRecoverySnapshot(mqt::gui::DocumentSession* session);
+    void clearRecoverySnapshot(const std::filesystem::path& path);
+    [[nodiscard]] QString recoveryDir() const;
+    void watchSession(mqt::gui::DocumentSession* session);
+    void onSessionFileChanged(const QString& path);
+    void openWorkspaceDirectory();
+    void setupWorkspacePanel();
+    void registerCommands();
+    void updateCommands();
+
+    // M14 标签页
+    void activateSession(mqt::gui::DocumentSession* session);
+    bool closeSession(mqt::gui::DocumentSession* session);
+    void updateTabForSession(mqt::gui::DocumentSession* session);
+    [[nodiscard]] QString tabTextForSession(mqt::gui::DocumentSession* session) const;
+    void enterEmptyState();
+    [[nodiscard]] mqt::gui::DocumentSession* sessionForPath(
+        const std::filesystem::path& path) const;
     void checkForUpdates(bool userInitiated);
     void openLogDirectory();
     bool loadDocument(const std::filesystem::path& path);
@@ -43,11 +102,55 @@ private:
     void updateStatusBar();
     void setCurrentPath(std::filesystem::path path, const mqt::core::FileInfo& info);
 
+    // Large-file (windowed) support.
+    [[nodiscard]] bool windowed() const;
+    void applyTierUiMode();
+    bool loadIntoEditor(const std::string& raw);
+    void closeActiveSession();
+    int editorCharacterCount() const;
+    int editorLineCount() const;
+    bool readWindow(std::uint64_t rawStart);
+    void jumpToWindowStart(std::uint64_t rawStart);
+    void jumpToFirstWindow();
+    void jumpToPreviousWindow();
+    void jumpToNextWindow();
+    void jumpToLastWindow();
+    void jumpToPositionDialog();
+    void requestIndexedPreview();
+    void launchIndexThread(std::uint64_t generation);
+    void applyIndexedPreviewResult(const PreviewIndexThread& thread);
+    // Background whole-file inspection (newline style) for the open document.
+    void launchInspectThread();
+    void finishInspectThread();
+    void completeInspection();
+    void applyInspectedInfo(const mqt::core::FileInfo& info);
+    void shutdownBackgroundWork();
+    void ensureDiskSpace(const std::filesystem::path& path, std::uint64_t neededBytes) const;
+
     std::filesystem::path currentPath_;
     mqt::core::FileInfo currentInfo_{};
     bool dirty_ = false;
     int previewStartLine_ = 1;
     int previewEndLine_ = 1;
+    bool largeMode_ = false;
+    std::uint64_t windowStart_ = 0;
+    std::uint64_t windowEnd_ = 0;
+    std::uint64_t previewGeneration_ = 0;
+    bool indexedPreviewPending_ = false;
+    PreviewIndexThread* indexThread_ = nullptr;
+    FileInspectThread* inspectThread_ = nullptr;
+    std::uint64_t documentGeneration_ = 0;
+    bool backgroundLoadPending_ = false;
+    QMenu* windowMenu_ = nullptr;
+
+    // M13/M14: each open document lives in its own DocumentSession (own
+    // editor + backend); the tab bar switches between them. The
+    // QPlainTextEdit editor remains the windowed large-file surface and the
+    // empty-state fallback.
+    QStackedWidget* editorStack_ = nullptr;
+    QList<DocumentSession*> sessions_;
+    QTabBar* tabBar_ = nullptr;
+    DocumentSession* activeSession_ = nullptr;
 
     QPlainTextEdit* editor_ = nullptr;
     QTextBrowser* preview_ = nullptr;
@@ -57,8 +160,32 @@ private:
     QLabel* tierLabel_ = nullptr;
     QLabel* editorMetaLabel_ = nullptr;
     QLabel* previewMetaLabel_ = nullptr;
+    // M11 查找/替换栏（Normal 档，Scintilla 编辑器）
+    QToolBar* findBar_ = nullptr;
+    QLineEdit* findEdit_ = nullptr;
+    QLineEdit* replaceEdit_ = nullptr;
+    QCheckBox* findRegex_ = nullptr;
+    QCheckBox* findCase_ = nullptr;
+    QLabel* findStatusLabel_ = nullptr;
+    QAction* findToggleAction_ = nullptr;
+    std::atomic_bool findCancelled_{false};
+
     QAction* saveAction_ = nullptr;
     QAction* reloadAction_ = nullptr;
+    QAction* saveAsAction_ = nullptr;
+    QAction* workspaceToggleAction_ = nullptr;
+    QMenu* recentMenu_ = nullptr;
+    QStringList recentFiles_;
+    QDockWidget* workspaceDock_ = nullptr;
+    QFileSystemModel* workspaceModel_ = nullptr;
+    QTreeView* workspaceTree_ = nullptr;
+    QList<QPair<QAction*, std::function<bool()>>> commands_;
+    QFileSystemWatcher* fileWatcher_ = nullptr;
+    QTimer* recoveryTimer_ = nullptr;
+    mqt::gui::DocumentSession* recoveryPendingSession_ = nullptr;
+    bool sessionRestored_ = false;
+
+    QAction* openAction_ = nullptr;
     QAction* checkUpdatesAction_ = nullptr;
     QTimer* previewTimer_ = nullptr;
     UpdateChecker* updateChecker_ = nullptr;

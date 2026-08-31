@@ -1,0 +1,29 @@
+{
+  "id": "m10_chunked_loader_line_index",
+  "name": "m10_chunked_loader_line_index",
+  "title": "M10 分块 Loader 与稀疏行索引",
+  "description": "批次3 M10：后台分块加载、稀疏行索引、BOM/换行/指纹元数据与可取消进度；验收 300MB 打开不冻结、取消后资源释放。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "cmx",
+  "assignee": "cmx",
+  "createdAt": "2026-08-29",
+  "completedAt": "2026-08-29",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "completedAt": "2026-08-29",
+    "status": "completed"
+  }
+}

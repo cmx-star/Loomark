@@ -1,0 +1,29 @@
+{
+  "id": "m15_workspace_recent_files",
+  "name": "m15_workspace_recent_files",
+  "title": "M15 Workspace 与最近文件",
+  "description": "批次4 M15：工作区文件树（懒加载、权限错误明确）与最近文件列表。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "cmx",
+  "assignee": "cmx",
+  "createdAt": "2026-08-29",
+  "completedAt": "2026-08-29",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "completedAt": "2026-08-29",
+    "status": "completed"
+  }
+}

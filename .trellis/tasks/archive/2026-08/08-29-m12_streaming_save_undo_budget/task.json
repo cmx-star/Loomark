@@ -1,0 +1,29 @@
+{
+  "id": "m12_streaming_save_undo_budget",
+  "name": "m12_streaming_save_undo_budget",
+  "title": "M12 流式保存与撤销预算",
+  "description": "批次3 M12：后端快照流式保存、恢复点、撤销内存预算与外部指纹复核；完成 F02 300MB 桌面完整编辑端到端验收。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "cmx",
+  "assignee": "cmx",
+  "createdAt": "2026-08-29",
+  "completedAt": "2026-08-29",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "completedAt": "2026-08-29",
+    "status": "completed"
+  }
+}

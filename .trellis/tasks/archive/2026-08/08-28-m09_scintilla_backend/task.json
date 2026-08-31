@@ -1,0 +1,29 @@
+{
+  "id": "m09_scintilla_backend",
+  "name": "m09_scintilla_backend",
+  "title": "M09 正式桌面后端接入",
+  "description": "批次3 M09：实现 ScintillaDocumentBackend 实现 IDocumentBackend 契约，接入 GUI，正文只保留一个事实源（Scintilla 缓冲），消除 UI 第二份完整字符串副本。前置：D01 决策获批。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "cmx",
+  "assignee": "cmx",
+  "createdAt": "2026-08-28",
+  "completedAt": "2026-08-29",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "completedAt": "2026-08-29",
+    "status": "completed"
+  }
+}

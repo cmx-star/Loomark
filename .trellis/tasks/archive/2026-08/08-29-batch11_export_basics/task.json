@@ -1,0 +1,28 @@
+{
+  "id": "batch11_export_basics",
+  "name": "batch11_export_basics",
+  "title": "批次11 导出基础",
+  "description": "M44 Front Matter；M45 ExportManifest；M46 GFM/TXT 流式导出；M47 安全静态 HTML。F09 核心层。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "cmx",
+  "assignee": "cmx",
+  "createdAt": "2026-08-29",
+  "completedAt": "2026-08-29",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "status": "completed"
+  }
+}

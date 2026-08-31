@@ -1,0 +1,28 @@
+{
+  "id": "m20_v01_gate",
+  "name": "m20_v01_gate",
+  "title": "M20 V0.1 回归与门禁",
+  "description": "批次5 M20：构建+ctest+打包产物门禁，F04 收口（三平台由 CI 覆盖）。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "cmx",
+  "assignee": "cmx",
+  "createdAt": "2026-08-29",
+  "completedAt": "2026-08-29",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "status": "completed"
+  }
+}

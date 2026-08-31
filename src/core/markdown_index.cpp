@@ -119,6 +119,10 @@ PreviewIndex buildPreviewIndex(const std::filesystem::path& path, const BuildPre
         throw std::invalid_argument("preview index options must be non-zero");
     }
 
+    const auto cancelled = [&options] {
+        return options.cancelFlag != nullptr && options.cancelFlag->load(std::memory_order_relaxed);
+    };
+
     std::ifstream input(path, std::ios::binary);
     if (!input) {
         throw std::runtime_error("failed to open file: " + path.string());
@@ -137,6 +141,28 @@ PreviewIndex buildPreviewIndex(const std::filesystem::path& path, const BuildPre
     bool paragraphOpen = false;
     std::uint64_t fenceStart = 0;
 
+    // Appends one whole line to a block text buffer, keeping the total under
+    // options.maxBlockTextBytes. All-or-nothing per line keeps UTF-8 intact.
+    auto appendBlockLine = [&options](std::string& target, std::string_view content, bool& truncated) {
+        if (truncated || options.maxBlockTextBytes == 0) {
+            return;
+        }
+        const std::size_t needed = target.size() + (target.empty() ? 0 : 1) + content.size();
+        if (needed > options.maxBlockTextBytes) {
+            truncated = true;
+            return;
+        }
+        if (!target.empty()) {
+            target.push_back('\n');
+        }
+        target.append(content.begin(), content.end());
+    };
+
+    bool paragraphTextTruncated = false;
+    bool fenceTextTruncated = false;
+    std::string paragraphText;
+    std::string fenceText;
+
     auto closeParagraph = [&](std::uint64_t end) -> bool {
         if (!paragraphOpen || !options.collectParagraphs) {
             paragraphOpen = false;
@@ -146,6 +172,10 @@ PreviewIndex buildPreviewIndex(const std::filesystem::path& path, const BuildPre
         MarkdownBlock block;
         block.type = MarkdownBlockType::Paragraph;
         block.sourceRange = {paragraphStart, end};
+        block.text = std::move(paragraphText);
+        block.textTruncated = paragraphTextTruncated;
+        paragraphText.clear();
+        paragraphTextTruncated = false;
         return pushBlock(index, std::move(block), options);
     };
 
@@ -153,7 +183,16 @@ PreviewIndex buildPreviewIndex(const std::filesystem::path& path, const BuildPre
         index.bytesScanned = end;
         if (lineTruncated) {
             lineTruncated = false;
-            return closeParagraph(start);
+            if (inFence) {
+                fenceTextTruncated = true;
+                return true;
+            }
+            if (!paragraphOpen) {
+                paragraphOpen = true;
+                paragraphStart = start;
+            }
+            paragraphTextTruncated = true;
+            return true;
         }
 
         std::string_view view(line);
@@ -165,9 +204,15 @@ PreviewIndex buildPreviewIndex(const std::filesystem::path& path, const BuildPre
                 MarkdownBlock block;
                 block.type = MarkdownBlockType::CodeFence;
                 block.sourceRange = {fenceStart, end};
+                block.text = std::move(fenceText);
+                block.textTruncated = fenceTextTruncated;
+                fenceText.clear();
+                fenceTextTruncated = false;
                 if (!pushBlock(index, std::move(block), options)) {
                     return false;
                 }
+            } else {
+                appendBlockLine(fenceText, view, fenceTextTruncated);
             }
             return true;
         }
@@ -178,6 +223,8 @@ PreviewIndex buildPreviewIndex(const std::filesystem::path& path, const BuildPre
             }
             inFence = true;
             fenceStart = start;
+            fenceText.clear();
+            fenceTextTruncated = false;
             return true;
         }
 
@@ -203,13 +250,18 @@ PreviewIndex buildPreviewIndex(const std::filesystem::path& path, const BuildPre
             paragraphOpen = true;
             paragraphStart = start;
         }
+        appendBlockLine(paragraphText, view, paragraphTextTruncated);
         return true;
     };
 
-    while (input && !index.truncated) {
+    while (input && !index.truncated && !index.cancelled) {
         input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
         const auto read = input.gcount();
         if (read <= 0) {
+            break;
+        }
+        if (cancelled()) {
+            index.cancelled = true;
             break;
         }
 
@@ -236,16 +288,18 @@ PreviewIndex buildPreviewIndex(const std::filesystem::path& path, const BuildPre
         }
     }
 
-    if (!index.truncated && (lineStart < offset || !line.empty())) {
+    if (!index.truncated && !index.cancelled && (lineStart < offset || !line.empty())) {
         processLine(lineStart, offset);
     }
-    if (!index.truncated && inFence) {
+    if (!index.truncated && !index.cancelled && inFence) {
         MarkdownBlock block;
         block.type = MarkdownBlockType::CodeFence;
         block.sourceRange = {fenceStart, offset};
+        block.text = std::move(fenceText);
+        block.textTruncated = fenceTextTruncated;
         pushBlock(index, std::move(block), options);
     }
-    if (!index.truncated) {
+    if (!index.truncated && !index.cancelled) {
         closeParagraph(offset);
     }
     index.bytesScanned = offset;

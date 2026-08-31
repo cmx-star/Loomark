@@ -33,6 +33,36 @@ FetchContent_Declare(md4qt
 
 FetchContent_MakeAvailable(md4qt)
 
+# ---------------------------------------------------------------------------
+# M06: Scintilla (HPND license) via FetchContent — isolated prototype only
+# ---------------------------------------------------------------------------
+option(MQT_BUILD_SCINTILLA_EXAMPLE "Build the Scintilla integration prototype." ON)
+if(MQT_BUILD_SCINTILLA_EXAMPLE)
+    # 上游 fork 的 cmake-support 分支提供 CMake 构建参考；浅克隆加速首次拉取。
+    # 解析到的提交：2812df4eb4b95bcebe4cbba656cd024c28415d20（记录于任务 design.md）。
+    # 只 Populate 不 MakeAvailable：fork 自带 CMakeLists 依赖 Qt6Core5Compat，
+    # 本项目用自己的目标定义直接编译其源码（见下方 markdown_qt_scintilla）。
+    FetchContent_Declare(scintilla
+        GIT_REPOSITORY https://github.com/diegoiast/scintilla-code.git
+        GIT_TAG cmake-support
+        GIT_SHALLOW TRUE
+        PATCH_COMMAND
+            ${CMAKE_COMMAND}
+            -DSCINTILLA_PATCH_DIR=<SOURCE_DIR>
+            -DMQT_PROJECT_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patch-scintilla-qt6.cmake
+    )
+    FetchContent_GetProperties(scintilla)
+    if(NOT scintilla_POPULATED)
+        cmake_policy(PUSH)
+        if(POLICY CMP0169)
+            cmake_policy(SET CMP0169 OLD)
+        endif()
+        FetchContent_Populate(scintilla)
+        cmake_policy(POP)
+    endif()
+endif()
+
 FetchContent_Declare(quickjs
     GIT_REPOSITORY https://github.com/quickjs-ng/quickjs.git
     GIT_TAG af0a40d94424476ce9365e881848af4c030517ec
@@ -97,10 +127,239 @@ target_include_directories(md4qt
 # md4qt targets C++17 internally. Restore this project's standard for targets below.
 set(CMAKE_CXX_STANDARD 20)
 
+# M06: Scintilla static library (HPND license)
+if(MQT_BUILD_SCINTILLA_EXAMPLE AND scintilla_POPULATED)
+    set(SCINTILLA_QT_SOURCES
+        "${scintilla_SOURCE_DIR}/qt/ScintillaEditBase/PlatQt.cpp"
+        "${scintilla_SOURCE_DIR}/qt/ScintillaEditBase/PlatQt.h"
+        "${scintilla_SOURCE_DIR}/qt/ScintillaEditBase/ScintillaEditBase.cpp"
+        "${scintilla_SOURCE_DIR}/qt/ScintillaEditBase/ScintillaEditBase.h"
+        "${scintilla_SOURCE_DIR}/qt/ScintillaEditBase/ScintillaQt.cpp"
+        "${scintilla_SOURCE_DIR}/qt/ScintillaEditBase/ScintillaQt.h"
+        "${scintilla_SOURCE_DIR}/src/AutoComplete.cxx"
+        "${scintilla_SOURCE_DIR}/src/AutoComplete.h"
+        "${scintilla_SOURCE_DIR}/src/CallTip.cxx"
+        "${scintilla_SOURCE_DIR}/src/CallTip.h"
+        "${scintilla_SOURCE_DIR}/src/CaseConvert.cxx"
+        "${scintilla_SOURCE_DIR}/src/CaseConvert.h"
+        "${scintilla_SOURCE_DIR}/src/CaseFolder.cxx"
+        "${scintilla_SOURCE_DIR}/src/CaseFolder.h"
+        "${scintilla_SOURCE_DIR}/src/CellBuffer.cxx"
+        "${scintilla_SOURCE_DIR}/src/CellBuffer.h"
+        "${scintilla_SOURCE_DIR}/src/ChangeHistory.cxx"
+        "${scintilla_SOURCE_DIR}/src/ChangeHistory.h"
+        "${scintilla_SOURCE_DIR}/src/CharacterCategoryMap.cxx"
+        "${scintilla_SOURCE_DIR}/src/CharacterCategoryMap.h"
+        "${scintilla_SOURCE_DIR}/src/CharacterType.cxx"
+        "${scintilla_SOURCE_DIR}/src/CharacterType.h"
+        "${scintilla_SOURCE_DIR}/src/CharClassify.cxx"
+        "${scintilla_SOURCE_DIR}/src/CharClassify.h"
+        "${scintilla_SOURCE_DIR}/src/ContractionState.cxx"
+        "${scintilla_SOURCE_DIR}/src/ContractionState.h"
+        "${scintilla_SOURCE_DIR}/src/DBCS.cxx"
+        "${scintilla_SOURCE_DIR}/src/DBCS.h"
+        "${scintilla_SOURCE_DIR}/src/Debugging.h"
+        "${scintilla_SOURCE_DIR}/src/Decoration.cxx"
+        "${scintilla_SOURCE_DIR}/src/Decoration.h"
+        "${scintilla_SOURCE_DIR}/src/Document.cxx"
+        "${scintilla_SOURCE_DIR}/src/Document.h"
+        "${scintilla_SOURCE_DIR}/src/EditModel.cxx"
+        "${scintilla_SOURCE_DIR}/src/EditModel.h"
+        "${scintilla_SOURCE_DIR}/src/Editor.cxx"
+        "${scintilla_SOURCE_DIR}/src/Editor.h"
+        "${scintilla_SOURCE_DIR}/src/EditView.cxx"
+        "${scintilla_SOURCE_DIR}/src/EditView.h"
+        "${scintilla_SOURCE_DIR}/src/ElapsedPeriod.h"
+        "${scintilla_SOURCE_DIR}/src/Geometry.cxx"
+        "${scintilla_SOURCE_DIR}/src/Geometry.h"
+        "${scintilla_SOURCE_DIR}/src/Indicator.cxx"
+        "${scintilla_SOURCE_DIR}/src/Indicator.h"
+        "${scintilla_SOURCE_DIR}/src/KeyMap.cxx"
+        "${scintilla_SOURCE_DIR}/src/KeyMap.h"
+        "${scintilla_SOURCE_DIR}/src/LineMarker.cxx"
+        "${scintilla_SOURCE_DIR}/src/LineMarker.h"
+        "${scintilla_SOURCE_DIR}/src/MarginView.cxx"
+        "${scintilla_SOURCE_DIR}/src/MarginView.h"
+        "${scintilla_SOURCE_DIR}/src/Partitioning.h"
+        "${scintilla_SOURCE_DIR}/src/PerLine.cxx"
+        "${scintilla_SOURCE_DIR}/src/PerLine.h"
+        "${scintilla_SOURCE_DIR}/src/Platform.h"
+        "${scintilla_SOURCE_DIR}/src/PositionCache.cxx"
+        "${scintilla_SOURCE_DIR}/src/PositionCache.h"
+        "${scintilla_SOURCE_DIR}/src/Position.h"
+        "${scintilla_SOURCE_DIR}/src/RESearch.cxx"
+        "${scintilla_SOURCE_DIR}/src/RESearch.h"
+        "${scintilla_SOURCE_DIR}/src/RunStyles.cxx"
+        "${scintilla_SOURCE_DIR}/src/RunStyles.h"
+        "${scintilla_SOURCE_DIR}/src/ScintillaBase.cxx"
+        "${scintilla_SOURCE_DIR}/src/ScintillaBase.h"
+        "${scintilla_SOURCE_DIR}/src/Selection.cxx"
+        "${scintilla_SOURCE_DIR}/src/Selection.h"
+        "${scintilla_SOURCE_DIR}/src/SparseVector.h"
+        "${scintilla_SOURCE_DIR}/src/SplitVector.h"
+        "${scintilla_SOURCE_DIR}/src/Style.cxx"
+        "${scintilla_SOURCE_DIR}/src/Style.h"
+        "${scintilla_SOURCE_DIR}/src/UndoHistory.cxx"
+        "${scintilla_SOURCE_DIR}/src/UndoHistory.h"
+        "${scintilla_SOURCE_DIR}/src/UniConversion.cxx"
+        "${scintilla_SOURCE_DIR}/src/UniConversion.h"
+        "${scintilla_SOURCE_DIR}/src/UniqueString.cxx"
+        "${scintilla_SOURCE_DIR}/src/UniqueString.h"
+        "${scintilla_SOURCE_DIR}/src/ViewStyle.cxx"
+        "${scintilla_SOURCE_DIR}/src/ViewStyle.h"
+        "${scintilla_SOURCE_DIR}/src/XPM.cxx"
+        "${scintilla_SOURCE_DIR}/src/XPM.h"
+    )
+    add_library(markdown_qt_scintilla STATIC ${SCINTILLA_QT_SOURCES})
+    target_include_directories(markdown_qt_scintilla
+        PRIVATE
+            "${scintilla_SOURCE_DIR}/include"
+            "${scintilla_SOURCE_DIR}/src"
+            "${scintilla_SOURCE_DIR}/qt"
+            "${scintilla_SOURCE_DIR}/qt/ScintillaEditBase"
+        PUBLIC
+            "${scintilla_SOURCE_DIR}/include"
+            "${scintilla_SOURCE_DIR}/src"
+            "${scintilla_SOURCE_DIR}/qt/ScintillaEditBase"
+    )
+    target_compile_definitions(markdown_qt_scintilla PRIVATE
+        -DSCINTILLA_QT=1
+        -DMAKING_LIBRARY=1
+        -DSCI_LEXER=1
+        $<$<CONFIG:Debug>:_DEBUG>
+        $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
+    )
+    if(WIN32)
+        target_compile_definitions(markdown_qt_scintilla PRIVATE -D_CRT_SECURE_NO_DEPRECATE=1)
+    endif()
+    target_link_libraries(markdown_qt_scintilla PRIVATE Qt6::Widgets)
+    set_target_properties(markdown_qt_scintilla PROPERTIES AUTOMOC ON)
+
+    add_executable(markdown_qt_scintilla_prototype
+        examples/scintilla_prototype/main.cpp
+    )
+    target_link_libraries(markdown_qt_scintilla_prototype
+        PRIVATE
+            markdown_qt_scintilla
+            Qt6::Widgets
+    )
+    target_compile_definitions(markdown_qt_scintilla_prototype
+        PRIVATE
+            -DSCINTILLA_QT=1
+            $<$<CONFIG:Debug>:_DEBUG>
+            $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
+    )
+    set_target_properties(markdown_qt_scintilla_prototype PROPERTIES AUTOMOC ON)
+    target_compile_options(markdown_qt_scintilla_prototype
+        PRIVATE
+            $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+    )
+
+    add_executable(markdown_qt_scintilla_smoke
+        examples/scintilla_prototype/prototype_smoke.cpp
+    )
+    target_link_libraries(markdown_qt_scintilla_smoke
+        PRIVATE
+            markdown_qt_scintilla
+            Qt6::Widgets
+            Qt6::Test
+    )
+    target_compile_definitions(markdown_qt_scintilla_smoke
+        PRIVATE
+            -DSCINTILLA_QT=1
+            $<$<CONFIG:Debug>:_DEBUG>
+            $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
+    )
+    set_target_properties(markdown_qt_scintilla_smoke PROPERTIES AUTOMOC ON)
+    add_test(NAME markdown_qt_scintilla_smoke COMMAND markdown_qt_scintilla_smoke)
+    set_tests_properties(markdown_qt_scintilla_smoke PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(markdown_qt_scintilla_bench
+        examples/scintilla_prototype/backend_bench.cpp
+    )
+    target_link_libraries(markdown_qt_scintilla_bench
+        PRIVATE
+            markdown_qt_scintilla
+            Qt6::Widgets
+    )
+    target_compile_definitions(markdown_qt_scintilla_bench
+        PRIVATE
+            -DSCINTILLA_QT=1
+            $<$<CONFIG:Debug>:_DEBUG>
+            $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
+    )
+    set_target_properties(markdown_qt_scintilla_bench PROPERTIES AUTOMOC ON)
+
+    add_executable(markdown_qt_scintilla_loader_verify
+        examples/scintilla_prototype/loader_verify.cpp
+    )
+    target_link_libraries(markdown_qt_scintilla_loader_verify
+        PRIVATE
+            markdown_qt_backend
+            Qt6::Widgets
+    )
+    set_target_properties(markdown_qt_scintilla_loader_verify PROPERTIES AUTOMOC ON)
+
+    # M09: ScintillaDocumentBackend — IDocumentBackend 实现包装可见编辑器实例
+    add_library(markdown_qt_backend
+        src/backend/scintilla_document_backend.cpp
+        src/backend/scintilla_load_task.cpp
+    )
+    target_link_libraries(markdown_qt_backend
+        PUBLIC
+            markdown_qt_core
+            markdown_qt_scintilla
+        PRIVATE
+            Qt6::Widgets
+    )
+    target_compile_definitions(markdown_qt_backend PRIVATE
+        -DSCINTILLA_QT=1
+        $<$<CONFIG:Debug>:_DEBUG>
+        $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
+    )
+    set_target_properties(markdown_qt_backend PROPERTIES AUTOMOC ON)
+    target_compile_options(markdown_qt_backend
+        PRIVATE
+            $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+    )
+
+    add_executable(markdown_qt_scintilla_backend_tests
+        tests/scintilla_document_backend_tests.cpp
+    )
+    target_link_libraries(markdown_qt_scintilla_backend_tests
+        PRIVATE
+            markdown_qt_backend
+            Qt6::Widgets
+    )
+    target_compile_definitions(markdown_qt_scintilla_backend_tests PRIVATE
+        -DSCINTILLA_QT=1
+        $<$<CONFIG:Debug>:_DEBUG>
+        $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
+    )
+    set_target_properties(markdown_qt_scintilla_backend_tests PROPERTIES AUTOMOC ON)
+    add_test(NAME markdown_qt_scintilla_backend_tests
+        COMMAND markdown_qt_scintilla_backend_tests)
+    set_tests_properties(markdown_qt_scintilla_backend_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+endif()
+
 add_library(markdown_qt_core
+    src/core/document_backend.cpp
     src/core/document_file.cpp
     src/core/file_tier.cpp
+    src/core/load_scanner.cpp
+    src/core/markdown_block.cpp
     src/core/markdown_index.cpp
+    src/core/block_edit.cpp
+    src/core/docx_export.cpp
+    src/core/export.cpp
+    src/core/git_service.cpp
+    src/core/zip_writer.cpp
+    src/core/view_sync.cpp
+    src/core/virtual_preview.cpp
 )
 
 target_include_directories(markdown_qt_core
@@ -113,7 +372,7 @@ target_compile_options(markdown_qt_core
         $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
 )
 
-find_package(Qt6 COMPONENTS Network Widgets Svg REQUIRED)
+find_package(Qt6 COMPONENTS Network Widgets Svg Test REQUIRED)
 
 set(MQT_APP_VERSION "${PROJECT_VERSION}" CACHE STRING "Application version displayed in the GUI and update checks.")
 if(DEFINED ENV{GITHUB_REF_NAME})
@@ -167,13 +426,21 @@ target_link_libraries(markdown_qt_p0
 
 add_executable(markdown_qt_gui
     resources/resources.qrc
+    src/gui/document_session.h
+    src/gui/document_session.cpp
     src/gui/application_logger.h
     src/gui/application_logger.cpp
+    src/gui/file_inspect_worker.h
+    src/gui/file_inspect_worker.cpp
     src/gui/main.cpp
     src/gui/markdown_document_renderer.cpp
+    src/gui/preview_index_worker.h
+    src/gui/preview_index_worker.cpp
     src/gui/update_checker.h
     src/gui/main_window.cpp
     src/gui/update_checker.cpp
+    src/gui/window_boundary.h
+    src/gui/window_boundary.cpp
 )
 
 if(APPLE)
@@ -190,6 +457,7 @@ endif()
 target_link_libraries(markdown_qt_gui
     PRIVATE
         markdown_qt_core
+        markdown_qt_backend
         md4qt::md4qt
         qjs
         Qt6::Network
@@ -264,6 +532,277 @@ target_link_libraries(markdown_qt_core_tests
 
 add_test(NAME markdown_qt_core_tests COMMAND markdown_qt_core_tests)
 
+add_executable(markdown_qt_document_backend_tests
+    tests/document_backend_tests.cpp
+)
+
+target_link_libraries(markdown_qt_document_backend_tests
+    PRIVATE
+        markdown_qt_core
+)
+
+target_compile_options(markdown_qt_document_backend_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+
+add_test(NAME markdown_qt_document_backend_tests COMMAND markdown_qt_document_backend_tests)
+
+add_executable(markdown_qt_document_session_tests
+    tests/document_session_tests.cpp
+    src/gui/document_session.h
+    src/gui/document_session.cpp
+)
+target_link_libraries(markdown_qt_document_session_tests
+    PRIVATE
+        markdown_qt_backend
+        Qt6::Widgets
+)
+target_compile_definitions(markdown_qt_document_session_tests PRIVATE
+    -DSCINTILLA_QT=1
+)
+set_target_properties(markdown_qt_document_session_tests PROPERTIES AUTOMOC ON)
+add_test(NAME markdown_qt_document_session_tests COMMAND markdown_qt_document_session_tests)
+set_tests_properties(markdown_qt_document_session_tests PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
+add_executable(markdown_qt_load_scanner_tests
+    tests/load_scanner_tests.cpp
+)
+target_link_libraries(markdown_qt_load_scanner_tests
+    PRIVATE
+        markdown_qt_core
+)
+target_compile_options(markdown_qt_load_scanner_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_load_scanner_tests COMMAND markdown_qt_load_scanner_tests)
+
+add_executable(markdown_qt_block_model_tests
+    tests/markdown_block_tests.cpp
+)
+target_link_libraries(markdown_qt_block_model_tests
+    PRIVATE
+        markdown_qt_core
+)
+target_compile_options(markdown_qt_block_model_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_block_model_tests COMMAND markdown_qt_block_model_tests)
+
+add_executable(markdown_qt_virtual_preview_tests
+    tests/virtual_preview_tests.cpp
+)
+target_link_libraries(markdown_qt_virtual_preview_tests
+    PRIVATE
+        markdown_qt_core
+)
+target_compile_options(markdown_qt_virtual_preview_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_virtual_preview_tests COMMAND markdown_qt_virtual_preview_tests)
+
+add_executable(markdown_qt_view_sync_tests
+    tests/view_sync_tests.cpp
+)
+target_link_libraries(markdown_qt_view_sync_tests
+    PRIVATE
+        markdown_qt_core
+)
+target_compile_options(markdown_qt_view_sync_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_view_sync_tests COMMAND markdown_qt_view_sync_tests)
+
+add_executable(markdown_qt_block_edit_tests
+    tests/block_edit_tests.cpp
+)
+target_link_libraries(markdown_qt_block_edit_tests
+    PRIVATE
+        markdown_qt_core
+)
+target_compile_options(markdown_qt_block_edit_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_block_edit_tests COMMAND markdown_qt_block_edit_tests)
+
+add_executable(markdown_qt_git_service_tests
+    tests/git_service_tests.cpp
+)
+target_link_libraries(markdown_qt_git_service_tests
+    PRIVATE
+        markdown_qt_core
+)
+target_compile_options(markdown_qt_git_service_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_git_service_tests COMMAND markdown_qt_git_service_tests)
+
+add_executable(markdown_qt_export_tests
+    tests/export_tests.cpp
+)
+target_link_libraries(markdown_qt_export_tests
+    PRIVATE
+        markdown_qt_core
+)
+target_compile_options(markdown_qt_export_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_export_tests COMMAND markdown_qt_export_tests)
+
+add_executable(markdown_qt_batch12_tests
+    tests/batch12_tests.cpp
+)
+target_link_libraries(markdown_qt_batch12_tests
+    PRIVATE
+        markdown_qt_core
+)
+target_compile_options(markdown_qt_batch12_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_batch12_tests COMMAND markdown_qt_batch12_tests)
+
+add_executable(markdown_qt_ai_tests
+    tests/ai_tests.cpp
+    src/ai/ai_provider.cpp
+    src/ai/chat_session.cpp
+)
+target_link_libraries(markdown_qt_ai_tests
+    PRIVATE
+        Qt6::Network
+        Qt6::Core
+)
+target_include_directories(markdown_qt_ai_tests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_options(markdown_qt_ai_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_ai_tests COMMAND markdown_qt_ai_tests)
+
+add_executable(markdown_qt_edit_proposal_tests
+    tests/edit_proposal_tests.cpp
+    src/ai/edit_proposal.cpp
+)
+target_link_libraries(markdown_qt_edit_proposal_tests
+    PRIVATE
+        markdown_qt_core
+        Qt6::Core
+)
+target_include_directories(markdown_qt_edit_proposal_tests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_options(markdown_qt_edit_proposal_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_edit_proposal_tests COMMAND markdown_qt_edit_proposal_tests)
+
+add_executable(markdown_qt_rag_tests
+    tests/rag_tests.cpp
+    src/ai/rag.cpp
+)
+target_link_libraries(markdown_qt_rag_tests
+    PRIVATE
+        markdown_qt_core
+        Qt6::Core
+)
+target_include_directories(markdown_qt_rag_tests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_options(markdown_qt_rag_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_rag_tests COMMAND markdown_qt_rag_tests)
+
+add_executable(markdown_qt_app_state_tests
+    tests/app_state_tests.cpp
+    src/core/app_state.cpp
+)
+target_link_libraries(markdown_qt_app_state_tests
+    PRIVATE
+        markdown_qt_core
+)
+target_compile_options(markdown_qt_app_state_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_app_state_tests COMMAND markdown_qt_app_state_tests)
+
+add_executable(markdown_qt_plugin_tests
+    tests/plugin_system_tests.cpp
+    src/core/app_state.cpp
+    src/core/plugin_system.cpp
+)
+target_link_libraries(markdown_qt_plugin_tests
+    PRIVATE
+        markdown_qt_core
+)
+target_compile_options(markdown_qt_plugin_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_plugin_tests COMMAND markdown_qt_plugin_tests)
+
+add_executable(markdown_qt_mobile_tests
+    tests/mobile_tests.cpp
+    src/core/mobile.cpp
+)
+target_link_libraries(markdown_qt_mobile_tests
+    PRIVATE
+        markdown_qt_core
+)
+target_compile_options(markdown_qt_mobile_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_mobile_tests COMMAND markdown_qt_mobile_tests)
+
+add_executable(markdown_qt_mobile_tasks_tests
+    tests/mobile_tasks_tests.cpp
+    src/core/mobile_tasks.cpp
+)
+target_link_libraries(markdown_qt_mobile_tasks_tests
+    PRIVATE
+        markdown_qt_core
+)
+target_compile_options(markdown_qt_mobile_tasks_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+add_test(NAME markdown_qt_mobile_tasks_tests COMMAND markdown_qt_mobile_tasks_tests)
+
+add_executable(markdown_qt_window_boundary_tests
+    src/gui/window_boundary.cpp
+    tests/window_boundary_tests.cpp
+)
+
+target_include_directories(markdown_qt_window_boundary_tests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_compile_options(markdown_qt_window_boundary_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+
+add_test(NAME markdown_qt_window_boundary_tests COMMAND markdown_qt_window_boundary_tests)
+
 add_executable(markdown_qt_markdown_renderer_tests
     src/gui/markdown_document_renderer.cpp
     tests/markdown_document_renderer_tests.cpp
@@ -312,9 +851,61 @@ target_compile_options(markdown_qt_update_checker_tests
 )
 
 add_test(NAME markdown_qt_update_checker_tests COMMAND markdown_qt_update_checker_tests)
+
+add_executable(markdown_qt_main_window_tests
+    resources/resources.qrc
+    src/gui/application_logger.h
+    src/gui/application_logger.cpp
+    src/gui/document_session.h
+    src/gui/document_session.cpp
+    src/gui/file_inspect_worker.h
+    src/gui/file_inspect_worker.cpp
+    src/gui/main_window.h
+    src/gui/main_window.cpp
+    src/gui/markdown_document_renderer.h
+    src/gui/markdown_document_renderer.cpp
+    src/gui/preview_index_worker.h
+    src/gui/preview_index_worker.cpp
+    src/gui/update_checker.h
+    src/gui/update_checker.cpp
+    src/gui/window_boundary.h
+    src/gui/window_boundary.cpp
+    tests/main_window_tests.cpp
+)
+
+target_link_libraries(markdown_qt_main_window_tests
+    PRIVATE
+        markdown_qt_core
+        markdown_qt_backend
+        md4qt::md4qt
+        qjs
+        Qt6::Network
+        Qt6::Widgets
+        Qt6::Svg
+)
+
+target_compile_definitions(markdown_qt_main_window_tests
+    PRIVATE
+        "MQT_APP_VERSION=\"${MQT_APP_VERSION}\""
+        MQT_BUILD_TESTS
+)
+
+target_compile_options(markdown_qt_main_window_tests
+    PRIVATE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,GNU>:-Wall -Wextra -Wpedantic>
+)
+
+add_dependencies(markdown_qt_main_window_tests mathjax_quickjs_bundle)
+add_test(NAME markdown_qt_main_window_tests COMMAND markdown_qt_main_window_tests)
+
 set(MARKDOWN_RENDERER_TEST_ENV "MQT_MATHJAX_BUNDLE=${MATHJAX_QUICKJS_BUNDLE}")
 set_tests_properties(markdown_qt_markdown_renderer_tests
     PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         ENVIRONMENT "${MARKDOWN_RENDERER_TEST_ENV}"
+)
+set_tests_properties(markdown_qt_main_window_tests
+    PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;${MARKDOWN_RENDERER_TEST_ENV}"
 )
