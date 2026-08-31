@@ -2,6 +2,8 @@
 
 #include "core/markdown_block.h"
 
+#include <cstring>
+
 #include <algorithm>
 #include <deque>
 #include <fstream>

@@ -7,11 +7,14 @@
 namespace mqt::core {
 
 namespace {
-constexpr const char* kGitBinary =
 #ifdef _WIN32
-    "git.exe";
+constexpr const char* kGitBinary = "git.exe";
+constexpr const char* kPopen = "_popen";
+constexpr const char* kPclose = "_pclose";
 #else
-    "git";
+constexpr const char* kGitBinary = "git";
+constexpr const char* kPopen = "popen";
+constexpr const char* kPclose = "pclose";
 #endif
 } // namespace
 
@@ -33,7 +36,7 @@ GitService::Result GitService::run(const std::vector<std::string>& args,
 
     Result result;
     std::array<char, 256> buffer{};
-    FILE* pipe = ::popen(command.c_str(), "r");
+    FILE* pipe = ::_popen(command.c_str(), "r");
     if (pipe == nullptr) {
         result.output = "failed to spawn git";
         return result;
@@ -41,17 +44,8 @@ GitService::Result GitService::run(const std::vector<std::string>& args,
     while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
         result.output += buffer.data();
     }
-    const int status = ::pclose(pipe);
-#ifdef _WIN32
+    const int status = ::_pclose(pipe);
     result.ok = allowFailure || status == 0;
-#else
-    result.ok = allowFailure || (status != -1 && WIFEXITED(status) && WEXITSTATUS(status) == 0);
-#endif
-    if (!allowFailure && !result.ok) {
-        result.ok = false;
-    } else if (allowFailure) {
-        result.ok = true;
-    }
     return result;
 }
 
